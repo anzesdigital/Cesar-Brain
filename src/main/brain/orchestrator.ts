@@ -1,13 +1,16 @@
 import { readFile } from 'node:fs/promises'
 import { relative } from 'node:path'
 import matter from 'gray-matter'
-import { query, type McpServerConfig, type Options, type Query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { BRAIN_ID, type AgentState, type ChatMessage, type ThoughtEvent, type UsageSnapshot } from '@shared/types'
-import { rosterText, type AgentRecord } from './registry'
+import type { AppConfig } from '../config'
+import type { McpCatalog } from '../mcp'
+import { fillPlaceholders, rosterText, type AgentRecord } from './registry'
 import { decide, type PermissionGate } from './permissions'
+import type { BrainProvider, RunResult, RunSink } from './providers/types'
 import type { SessionStore } from './sessions'
+import { render, templateFor } from './bubbles'
 import { firstSentence, permissionSummary, thoughtForTool, truncate } from './thoughts'
-import { RunMeter, type ApiUsage, type PlanUsage, type UsageStore } from './usage'
+import type { UsageStore } from './usage'
 
 export interface BrainEvents {
   thought(event: ThoughtEvent): void
@@ -21,26 +24,16 @@ export interface BrainConfig {
   workspaceDir: string
   brainPromptFile: string
   memoryFile: string
+  /** Folders agents may read without asking (agents folder). */
+  readableDirs: string[]
   getAgents(): AgentRecord[]
-  getApiKey(): string | undefined
-  /** Built-in tool servers, by name. */
-  mcpServers: Record<string, McpServerConfig>
-  /** Full names of built-in tools that never need César's approval. */
-  trustedTools: ReadonlySet<string>
+  getMcp(): McpCatalog
+  getConfig(): AppConfig
+  getProvider(): BrainProvider
   usage: UsageStore
 }
 
-interface ToolUseBlock {
-  type: 'tool_use'
-  id: string
-  name: string
-  input: Record<string, unknown>
-}
-
-const DELEGATION_TOOLS = new Set(['Agent', 'Task'])
 const IDLE_DELAY_MS = 3000
-const LIMITS_TIMEOUT_MS = 5000
-const MAIN_STREAM = 'main'
 
 async function readOptional(file: string): Promise<string> {
   try {
@@ -50,18 +43,25 @@ async function readOptional(file: string): Promise<string> {
   }
 }
 
+/** Builds the brain's system prompt from brain.md. */
+export function brainPrompt(
+  template: string,
+  values: { roster: string; memory: string; user: string; delegation: string }
+): string {
+  return fillPlaceholders(matter(template).content, {
+    ROSTER: values.roster,
+    MEMORY: values.memory || '(vacía)',
+    USER: values.user || 'el usuario',
+    DELEGATION: values.delegation
+  }).trim()
+}
+
 export class BrainOrchestrator {
   private abort?: AbortController
-  /** tool_use id of a delegation call -> agent id doing that job */
+  /** delegation call id -> agent id doing that job */
   private jobs = new Map<string, string>()
-  /** tool_use id of any tool call -> agent id that made it (for permission prompts) */
-  private toolOwners = new Map<string, string>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
   private active = new Set<string>()
-  private meter = new RunMeter()
-  private current?: Query
-  private cost?: { sessionId: string; totalUsd: number }
-  private resumed = false
 
   constructor(
     private config: BrainConfig,
@@ -91,41 +91,50 @@ export class BrainOrchestrator {
     this.events.message(userMessage)
     this.think(BRAIN_ID, 'thinking', 'Déjame pensar…')
 
-    let finalText = ''
-    let failed = false
-    this.meter = new RunMeter()
-    this.cost = undefined
+    const provider = this.config.getProvider()
+    const appConfig = this.config.getConfig()
+    const agents = this.config.getAgents()
+    const resumeId = this.sessions.sessionId(provider.id)
+    let result: RunResult
     try {
-      const options = await this.buildOptions(abort)
+      const template = await readOptional(this.config.brainPromptFile)
+      const memory = (await readOptional(this.config.memoryFile)).replace(/<!--[\s\S]*?-->/g, '').trim()
       const fullPrompt = files.length
-        ? `${prompt}\n\nArchivos adjuntos (rutas relativas al directorio de trabajo):\n${files
-            .map((f) => `- ${f}`)
-            .join('\n')}`
+        ? `${prompt}\n\nArchivos adjuntos (rutas relativas al directorio de trabajo):\n${files.map((f) => `- ${f}`).join('\n')}`
         : prompt
-
-      const running = query({ prompt: fullPrompt, options })
-      this.current = running
-      for await (const message of running) {
-        const result = await this.handle(message)
-        if (result) {
-          finalText = result.text
-          failed = result.failed
-        }
-      }
+      result = await provider.run(
+        {
+          prompt: fullPrompt,
+          systemPrompt: brainPrompt(template, {
+            roster: rosterText(agents),
+            memory,
+            user: appConfig.userName,
+            delegation: provider.delegationText(appConfig)
+          }),
+          agents,
+          mcp: this.config.getMcp(),
+          config: appConfig,
+          workspaceDir: this.config.workspaceDir,
+          resumeId,
+          signal: abort.signal
+        },
+        this.sink(provider.id)
+      )
     } catch (err) {
-      failed = true
-      finalText = abort.signal.aborted ? 'Detenido.' : `Error: ${(err as Error).message}`
+      result = { text: `Error: ${(err as Error).message}`, failed: true, tokens: {} }
     } finally {
       this.abort = undefined
-      this.current = undefined
       this.jobs.clear()
-      this.toolOwners.clear()
     }
 
     try {
-      // Set while handling the result message; the compiler cannot see that from here.
-      const cost = this.cost as { sessionId: string; totalUsd: number } | undefined
-      await this.config.usage.recordRun(this.meter.totals(), cost?.sessionId, cost?.totalUsd, this.resumed)
+      await this.config.usage.recordRun(
+        result.tokens,
+        result.sessionId,
+        result.sessionCostUsd,
+        Boolean(resumeId),
+        result.premiumRequests
+      )
       this.events.usage(this.config.usage.snapshot())
     } catch (err) {
       console.warn('[uso]', err)
@@ -134,12 +143,13 @@ export class BrainOrchestrator {
     for (const id of [...this.active]) {
       if (id !== BRAIN_ID) this.think(id, 'idle', '')
     }
+    const failed = result.failed
     this.think(BRAIN_ID, failed ? 'error' : 'done', failed ? 'Algo salió mal' : '¡Listo!')
     this.scheduleIdle(BRAIN_ID)
 
     const reply: ChatMessage = {
       role: 'brain',
-      text: finalText || '(sin respuesta)',
+      text: result.text || '(sin respuesta)',
       error: failed,
       ts: Date.now()
     }
@@ -148,178 +158,70 @@ export class BrainOrchestrator {
     this.events.busy(false)
   }
 
-  private async buildOptions(abort: AbortController): Promise<Options> {
-    const agents = this.config.getAgents()
-    const brainFile = matter(await readOptional(this.config.brainPromptFile))
-    const memory = (await readOptional(this.config.memoryFile)).trim()
-    const systemPrompt = brainFile.content
-      .replace('{{ROSTER}}', rosterText(agents))
-      .replace('{{MEMORY}}', memory || '(vacía)')
-      .trim()
-
-    const env: Record<string, string | undefined> = { ...process.env }
-    const apiKey = this.config.getApiKey()
-    if (apiKey) env.ANTHROPIC_API_KEY = apiKey
-
-    const options: Options = {
-      abortController: abort,
-      cwd: this.config.workspaceDir,
-      systemPrompt,
-      agents: Object.fromEntries(agents.map((a) => [a.info.id, a.definition])),
-      mcpServers: this.config.mcpServers,
-      allowedTools: ['Agent', 'WebSearch', 'WebFetch', ...this.config.trustedTools],
-      // Do not inherit the user's Claude Code settings, hooks or plugins.
-      settingSources: [],
-      includePartialMessages: true,
-      forwardSubagentText: true,
-      env,
-      canUseTool: async (toolName, input, ctx) => {
-        if (decide(toolName, input, this.config.workspaceDir, this.config.trustedTools) === 'allow') {
-          return { behavior: 'allow', updatedInput: input }
+  private sink(providerId: BrainProvider['id']): RunSink {
+    return {
+      sessionId: (id) => void this.sessions.setSessionId(providerId, id),
+      textDelta: (text) => this.events.delta(text),
+      agentText: (agentId, text) => {
+        const sentence = firstSentence(text)
+        if (sentence) this.think(agentId, 'working', sentence)
+      },
+      toolStart: (agentId, tool, input) => {
+        const custom = templateFor(this.bubblesOf(agentId), tool)
+        const text = custom ? truncate(render(custom, input)) : ''
+        this.think(agentId, 'working', text || thoughtForTool(tool, input))
+      },
+      delegationStart: (callId, agentId, task) => {
+        const agent = this.config.getAgents().find((a) => a.info.id === agentId)
+        this.jobs.set(callId, agentId)
+        this.think(BRAIN_ID, 'working', truncate(`Esto es para ${agent?.info.name ?? agentId}…`))
+        const custom = this.bubblesOf(agentId)?._encargo
+        const text = custom ? render(custom, { tarea: task }) : task ? `Encargo: ${task}` : 'Recibí un encargo'
+        this.think(agentId, 'thinking', truncate(text))
+      },
+      delegationEnd: (callId, ok) => {
+        const agentId = this.jobs.get(callId)
+        if (!agentId) return
+        this.jobs.delete(callId)
+        // An agent may hold several jobs at once; only finish on the last one.
+        if (![...this.jobs.values()].includes(agentId)) {
+          const bubbles = this.bubblesOf(agentId)
+          const text = ok ? (bubbles?._listo ?? '¡Listo!') : (bubbles?._error ?? 'No pude…')
+          this.think(agentId, ok ? 'done' : 'error', truncate(text))
+          this.scheduleIdle(agentId)
         }
-        const agentId = this.toolOwners.get(ctx.toolUseID) ?? BRAIN_ID
-        const summary = permissionSummary(toolName, input)
+        this.think(BRAIN_ID, 'thinking', 'Reviso lo que me entregaron…')
+      },
+      limits: (limits, available, plan) => {
+        void this.config.usage
+          .setLimits(providerId, limits, available, plan)
+          .then(() => this.events.usage(this.config.usage.snapshot()))
+          .catch((err) => console.warn('[uso]', err))
+      },
+      authorize: async (agentId, tool, input, signal) => {
+        const decision = decide(tool, input, {
+          workspaceDir: this.config.workspaceDir,
+          readableDirs: this.config.readableDirs,
+          trustedServers: this.config.getMcp().trusted,
+          trustedTools: this.config.getMcp().trustedTools
+        })
+        if (decision === 'allow') return true
+        const custom = templateFor(this.agentOf(agentId)?.spec.permissions, tool)
+        const summary = (custom && render(custom, input, '\n')) || permissionSummary(tool, input)
         this.think(agentId, 'asking', truncate(`¿Puedo? ${summary}`))
-        const allowed = await this.gate.ask(agentId, toolName, summary, ctx.signal)
+        const allowed = await this.gate.ask(agentId, tool, summary, signal)
         this.think(agentId, 'working', allowed ? 'Gracias, sigo…' : 'Entendido, no lo hago')
         return allowed
-          ? { behavior: 'allow', updatedInput: input }
-          : { behavior: 'deny', message: 'El usuario no autorizó esta acción.' }
       }
-    }
-    const model = (brainFile.data as Record<string, unknown> | null)?.model
-    if (typeof model === 'string' && model.trim()) options.model = model.trim()
-    this.resumed = Boolean(this.sessions.sessionId)
-    if (this.sessions.sessionId) options.resume = this.sessions.sessionId
-    return options
-  }
-
-  private streamText = ''
-
-  private async handle(msg: SDKMessage): Promise<{ text: string; failed: boolean } | undefined> {
-    switch (msg.type) {
-      case 'system':
-        if (msg.subtype === 'init') {
-          await this.sessions.setSessionId(msg.session_id)
-          void this.refreshLimits()
-        }
-        return undefined
-
-      case 'rate_limit_event':
-        void this.refreshLimits()
-        return undefined
-
-      case 'stream_event': {
-        const event = msg.event as {
-          type: string
-          delta?: { type: string; text?: string }
-          message?: { id: string; usage?: ApiUsage }
-          usage?: ApiUsage
-        }
-        const streamKey = msg.parent_tool_use_id ?? MAIN_STREAM
-        if (event.type === 'message_start' && event.message) {
-          this.meter.start(streamKey, this.speakerOf(msg.parent_tool_use_id), event.message.id, event.message.usage)
-        } else if (event.type === 'message_delta') {
-          this.meter.delta(streamKey, event.usage)
-        }
-        if (msg.parent_tool_use_id) return undefined
-        if (event.type === 'message_start') {
-          this.streamText = ''
-        } else if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          this.streamText += event.delta.text ?? ''
-          this.events.delta(this.streamText)
-        }
-        return undefined
-      }
-
-      case 'assistant': {
-        const speaker = this.speakerOf(msg.parent_tool_use_id)
-        this.meter.message(speaker, msg.message.id, msg.message.usage as ApiUsage)
-        const blocks = msg.message.content as Array<{ type: string; text?: string }>
-        for (const block of blocks) {
-          if (block.type === 'text' && block.text && speaker !== BRAIN_ID) {
-            const sentence = firstSentence(block.text)
-            if (sentence) this.think(speaker, 'working', sentence)
-          } else if (block.type === 'tool_use') {
-            this.onToolUse(speaker, block as unknown as ToolUseBlock)
-          }
-        }
-        return undefined
-      }
-
-      case 'user': {
-        if (msg.parent_tool_use_id) return undefined
-        const content = msg.message.content
-        if (!Array.isArray(content)) return undefined
-        for (const block of content) {
-          if (block.type !== 'tool_result') continue
-          const agentId = this.jobs.get(block.tool_use_id)
-          if (!agentId) continue
-          this.jobs.delete(block.tool_use_id)
-          // An agent may hold several jobs at once; only finish on the last one.
-          if (![...this.jobs.values()].includes(agentId)) {
-            this.think(agentId, block.is_error ? 'error' : 'done', block.is_error ? 'No pude…' : '¡Listo!')
-            this.scheduleIdle(agentId)
-          }
-          this.think(BRAIN_ID, 'thinking', 'Reviso lo que me entregaron…')
-        }
-        return undefined
-      }
-
-      case 'result':
-        this.cost = { sessionId: msg.session_id, totalUsd: msg.total_cost_usd }
-        // Last chance to read the plan limits while the session is still open.
-        await this.refreshLimits()
-        if (msg.subtype === 'success') return { text: msg.result, failed: msg.is_error }
-        return { text: `El Cerebro no pudo terminar (${msg.subtype}).`, failed: true }
-
-      default:
-        return undefined
     }
   }
 
-  private speakerOf(parentToolUseId: string | null | undefined): string {
-    return parentToolUseId ? (this.jobs.get(parentToolUseId) ?? BRAIN_ID) : BRAIN_ID
+  private agentOf(agentId: string): AgentRecord | undefined {
+    return this.config.getAgents().find((a) => a.info.id === agentId)
   }
 
-  /** Reads the plan's limit windows from the running session; never fails the run. */
-  private async refreshLimits(): Promise<void> {
-    const running = this.current
-    if (!running) return
-    let timer: NodeJS.Timeout | undefined
-    try {
-      const plan = await Promise.race([
-        running.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
-        new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => resolve(undefined), LIMITS_TIMEOUT_MS)
-        })
-      ])
-      if (!plan) return
-      await this.config.usage.setPlan(plan as PlanUsage)
-      this.events.usage(this.config.usage.snapshot())
-    } catch {
-      // The call is experimental; without it the panel just keeps the last values.
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-
-  private onToolUse(speaker: string, block: ToolUseBlock): void {
-    this.toolOwners.set(block.id, speaker)
-    if (speaker === BRAIN_ID && DELEGATION_TOOLS.has(block.name)) {
-      const target = String(block.input.subagent_type ?? '')
-      const agent = this.config.getAgents().find((a) => a.info.id === target)
-      if (!agent) {
-        this.think(BRAIN_ID, 'working', 'Delegando una tarea…')
-        return
-      }
-      this.jobs.set(block.id, agent.info.id)
-      this.think(BRAIN_ID, 'working', truncate(`Esto es para ${agent.info.name}…`))
-      const task = String(block.input.description ?? '')
-      this.think(agent.info.id, 'thinking', truncate(task ? `Encargo: ${task}` : 'Recibí un encargo'))
-      return
-    }
-    this.think(speaker, 'working', thoughtForTool(block.name, block.input))
+  private bubblesOf(agentId: string): Record<string, string> | undefined {
+    return this.agentOf(agentId)?.spec.bubbles
   }
 
   private think(agentId: string, state: AgentState, text: string): void {

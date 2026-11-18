@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "archivos-proyecto": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Proyectos"],
+      "trusted": false
+    },
+    "remoto": {
+      "type": "http",
+      "url": "https://mcp.ejemplo.com/mcp",
+      "headers": { "Authorization": "Bearer PON_AQUI_TU_TOKEN" },
+      "disabled": true
+    }
+  }
+}

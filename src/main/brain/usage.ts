@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { TokenCount, UsageDay, UsageLimit, UsageSnapshot } from '@shared/types'
+import type { ProviderId, TokenCount, UsageDay, UsageLimit, UsageSnapshot } from '@shared/types'
 
 const KEEP_DAYS = 90
 
@@ -134,6 +134,7 @@ interface UsageData {
   limitsAt?: number
   limitsAvailable?: boolean
   plan?: string
+  limitsProvider?: ProviderId
   /** Running cost total last reported for a session, to charge each run only its own part. */
   session?: { id: string; costUsd: number }
 }
@@ -157,9 +158,9 @@ export class UsageStore {
   }
 
   snapshot(): UsageSnapshot {
-    const { limits, limitsAt, limitsAvailable, plan } = this.data
+    const { limits, limitsAt, limitsAvailable, plan, limitsProvider } = this.data
     const days = Object.values(this.data.days).sort((a, b) => a.date.localeCompare(b.date))
-    return { days, limits, limitsAt, limitsAvailable, plan }
+    return { days, limits, limitsAt, limitsAvailable, plan, limitsProvider }
   }
 
   /**
@@ -167,16 +168,21 @@ export class UsageStore {
    * as the SDK reports it; only what was added since the previous run counts.
    * A resumed session with no earlier total on record cannot be split, so that
    * run sets the starting point and is charged nothing.
+   * `premiumRequests` is what this run alone spent (Copilot).
    */
   async recordRun(
     agents: Record<string, TokenCount>,
     sessionId?: string,
     sessionCostUsd?: number,
-    resumed = false
+    resumed = false,
+    premiumRequests?: number
   ): Promise<void> {
     const date = dayKey(this.now())
     const day = this.data.days[date] ?? { date, runs: 0, costUsd: 0, agents: {} }
     day.runs += 1
+    if (typeof premiumRequests === 'number' && premiumRequests > 0) {
+      day.premiumRequests = (day.premiumRequests ?? 0) + premiumRequests
+    }
     for (const [agentId, count] of Object.entries(agents)) {
       day.agents[agentId] = addCount(day.agents[agentId] ?? emptyCount(), count)
     }
@@ -194,11 +200,23 @@ export class UsageStore {
     await this.save()
   }
 
-  async setPlan(plan: PlanUsage): Promise<void> {
-    this.data.limitsAvailable = plan.rate_limits_available
-    this.data.plan = plan.subscription_type ?? undefined
-    this.data.limits = limitsFromPlan(plan)
+  /** Stores the limits last read from a provider account. */
+  async setLimits(provider: ProviderId, limits: UsageLimit[], available: boolean, plan?: string): Promise<void> {
+    this.data.limitsProvider = provider
+    this.data.limitsAvailable = available
+    this.data.plan = plan
+    this.data.limits = limits
     this.data.limitsAt = this.now().getTime()
+    await this.save()
+  }
+
+  /** Forgets limits read from another provider (they would be misleading). */
+  async clearLimits(): Promise<void> {
+    this.data.limits = []
+    this.data.limitsAt = undefined
+    this.data.limitsAvailable = undefined
+    this.data.plan = undefined
+    this.data.limitsProvider = undefined
     await this.save()
   }
 

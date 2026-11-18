@@ -2,11 +2,13 @@ node_modules/
 out/
 dist/
 .env
-# personal finance data and source files
+*.log
+# User data lives outside the repo (%USERPROFILE%\CesarBrain); never commit a local copy.
+workspace/
+agents/
+config.json
+mcp.json
+memory.md
+# Personal finance data from the old version (tag personal-finanzas)
 brain/finanzas/
 input/
-*.log
-workspace/inbox/*
-workspace/output/*
-!workspace/inbox/.gitkeep
-!workspace/output/.gitkeep

@@ -1,38 +1,41 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { ChatMessage } from '@shared/types'
+import type { ChatMessage, ProviderId } from '@shared/types'
 
 interface SessionData {
-  sessionId?: string
+  /** Provider session id, one per provider (they cannot resume each other's). */
+  sessionIds: Partial<Record<ProviderId, string>>
   messages: ChatMessage[]
 }
 
-/** One persisted conversation: the SDK session id plus what the UI showed. */
+/** One persisted conversation: the provider session ids plus what the UI showed. */
 export class SessionStore {
-  private data: SessionData = { messages: [] }
+  private data: SessionData = { sessionIds: {}, messages: [] }
 
   constructor(private file: string) {}
 
   async load(): Promise<void> {
     try {
-      const parsed = JSON.parse(await readFile(this.file, 'utf8')) as SessionData
-      this.data = { sessionId: parsed.sessionId, messages: parsed.messages ?? [] }
+      const parsed = JSON.parse(await readFile(this.file, 'utf8')) as Partial<SessionData> & { sessionId?: string }
+      // Files from before providers existed hold one Claude session id.
+      const sessionIds = parsed.sessionIds ?? (parsed.sessionId ? { claude: parsed.sessionId } : {})
+      this.data = { sessionIds, messages: parsed.messages ?? [] }
     } catch {
-      this.data = { messages: [] }
+      this.data = { sessionIds: {}, messages: [] }
     }
   }
 
-  get sessionId(): string | undefined {
-    return this.data.sessionId
+  sessionId(provider: ProviderId): string | undefined {
+    return this.data.sessionIds[provider]
   }
 
   get messages(): ChatMessage[] {
     return this.data.messages
   }
 
-  async setSessionId(id: string): Promise<void> {
-    if (this.data.sessionId === id) return
-    this.data.sessionId = id
+  async setSessionId(provider: ProviderId, id: string): Promise<void> {
+    if (this.data.sessionIds[provider] === id) return
+    this.data.sessionIds[provider] = id
     await this.save()
   }
 
@@ -42,7 +45,7 @@ export class SessionStore {
   }
 
   async reset(): Promise<void> {
-    this.data = { messages: [] }
+    this.data = { sessionIds: {}, messages: [] }
     await this.save()
   }
 

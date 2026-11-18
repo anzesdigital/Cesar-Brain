@@ -1,18 +1,43 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
 import { BRAIN_ID, type AgentInfo, type SpriteSpec } from '@shared/types'
+
+/** Provider-neutral description of an agent; each provider turns it into its own format. */
+export interface AgentSpec {
+  description: string
+  prompt: string
+  /** Canonical tool names (Read, Write, WebFetch…). Undefined = every tool. */
+  tools?: string[]
+  /** Names of servers from mcp.json this agent uses. */
+  mcp: string[]
+  /** Alias or model id as written in agent.md. */
+  model?: string
+  /** Bubble templates per tool (and _encargo/_listo/_error). */
+  bubbles?: Record<string, string>
+  /** Permission-prompt templates per tool. */
+  permissions?: Record<string, string>
+}
 
 export interface AgentRecord {
   info: AgentInfo
-  definition: AgentDefinition
+  spec: AgentSpec
+  /** Shipped with the app (brain/agents) rather than the user's folder. */
+  builtin: boolean
 }
 
 export interface LoadResult {
   agents: AgentRecord[]
   errors: string[]
 }
+
+export interface AgentSource {
+  dir: string
+  builtin: boolean
+}
+
+/** Tool names an agent.md may list. Providers translate them. */
+export const CANONICAL_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Bash'] as const
 
 const ID_RE = /^[a-z][a-z0-9-]{1,31}$/
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
@@ -35,6 +60,33 @@ function hex(value: unknown, fallback: string): string {
   return typeof value === 'string' && HEX_RE.test(value) ? value : fallback
 }
 
+/** Replaces `{{NAME}}` with values; unknown placeholders are left as written. */
+export function fillPlaceholders(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{([A-Z_]+)\}\}/g, (whole, name: string) => vars[name] ?? whole)
+}
+
+function stringList(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((t) => typeof t !== 'string')) {
+    throw new Error(`"${field}" debe ser una lista, por ejemplo [Read, Write]`)
+  }
+  return (value as string[]).map((t) => t.trim()).filter(Boolean)
+}
+
+function templates(value: unknown, field: string): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`"${field}" debe ser una lista "herramienta: texto" (por ejemplo Read: Leyendo {file_path})`)
+  }
+  const out: Record<string, string> = {}
+  for (const [key, text] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof text !== 'string' && typeof text !== 'number') {
+      throw new Error(`"${field}.${key}" debe ser un texto`)
+    }
+    out[key] = String(text)
+  }
+  return out
+}
+
 /**
  * Parses one agent.md file. Throws an Error with a human-readable reason when
  * the file cannot become an agent.
@@ -42,8 +94,9 @@ function hex(value: unknown, fallback: string): string {
 export function parseAgentFile(
   content: string,
   folderName: string,
-  /** Built-in tool servers an agent may ask for with `mcp: [name]`: server name -> full tool names. */
-  mcpTools: Record<string, string[]> = {}
+  /** Server names defined in mcp.json. */
+  mcpServers: ReadonlySet<string> = new Set(),
+  vars: Record<string, string> = {}
 ): AgentRecord {
   const { data, content: body } = matter(content)
   const id = String(data.id ?? folderName).trim()
@@ -52,18 +105,29 @@ export function parseAgentFile(
   }
   if (id === BRAIN_ID) throw new Error(`"${BRAIN_ID}" está reservado para el Cerebro`)
 
-  const description = String(data.description ?? '').trim()
+  const description = fillPlaceholders(String(data.description ?? '').trim(), vars)
   if (!description) throw new Error('falta "description" (cuándo debe usarlo el Cerebro)')
 
-  const prompt = body.trim()
+  const prompt = fillPlaceholders(body.trim(), vars)
   if (!prompt) throw new Error('falta el cuerpo del archivo (instrucciones del agente)')
 
   let tools: string[] | undefined
   if (data.tools !== undefined) {
-    if (!Array.isArray(data.tools) || data.tools.some((t) => typeof t !== 'string')) {
-      throw new Error('"tools" debe ser una lista de nombres de herramienta')
+    tools = stringList(data.tools, 'tools')
+    const unknown = tools.filter((t) => !(CANONICAL_TOOLS as readonly string[]).includes(t) && !t.startsWith('mcp__'))
+    if (unknown.length) {
+      throw new Error(`herramienta desconocida: ${unknown.join(', ')} (disponibles: ${CANONICAL_TOOLS.join(', ')})`)
     }
-    tools = data.tools as string[]
+  }
+
+  let mcp: string[] = []
+  if (data.mcp !== undefined) {
+    mcp = stringList(data.mcp, 'mcp')
+    const unknown = mcp.filter((s) => !mcpServers.has(s))
+    if (unknown.length) {
+      const available = [...mcpServers].join(', ') || 'ninguno'
+      throw new Error(`servidor mcp desconocido: ${unknown.join(', ')} (en mcp.json hay: ${available})`)
+    }
   }
 
   const base = PALETTE[hashString(id) % PALETTE.length]
@@ -76,60 +140,73 @@ export function parseAgentFile(
 
   const name = String(data.name ?? id).trim()
   const role = String(data.role ?? '').trim()
+  const model = typeof data.model === 'string' && data.model.trim() ? data.model.trim() : undefined
+  const bubbles = templates(data.burbujas, 'burbujas')
+  const permissions = templates(data.permisos, 'permisos')
 
-  let servers: string[] = []
-  if (data.mcp !== undefined) {
-    if (!Array.isArray(data.mcp) || data.mcp.some((s) => typeof s !== 'string')) {
-      throw new Error('"mcp" debe ser una lista de nombres de servidor')
-    }
-    servers = data.mcp as string[]
-    const unknown = servers.filter((s) => !mcpTools[s])
-    if (unknown.length) {
-      const available = Object.keys(mcpTools).join(', ') || 'ninguno'
-      throw new Error(`servidor mcp desconocido: ${unknown.join(', ')} (disponibles: ${available})`)
-    }
+  const spec: AgentSpec = { description, prompt, tools, mcp, model }
+  if (bubbles) spec.bubbles = bubbles
+  if (permissions) spec.permissions = permissions
+
+  return {
+    info: { id, name, role, description, sprite },
+    spec,
+    builtin: false
   }
-
-  const definition: AgentDefinition = { description, prompt }
-  // With no `tools` list the agent inherits everything, server tools included.
-  if (tools) definition.tools = [...tools, ...servers.flatMap((s) => mcpTools[s])]
-  if (servers.length) definition.mcpServers = servers
-  if (typeof data.model === 'string' && data.model.trim()) definition.model = data.model.trim()
-
-  return { info: { id, name, role, description, sprite }, definition }
 }
 
-/** Reads every `<agentsDir>/<folder>/agent.md`. Bad files are reported, not fatal. */
+/** Folders starting with `_` or `.` are switched off. */
+function isDisabled(folder: string): boolean {
+  return folder.startsWith('_') || folder.startsWith('.')
+}
+
+/**
+ * Reads every `<dir>/<folder>/agent.md` of each source, in order. Bad files are
+ * reported, not fatal. On a repeated id the first source wins, so built-in
+ * agents cannot be replaced by accident.
+ */
 export async function loadAgents(
-  agentsDir: string,
-  mcpTools: Record<string, string[]> = {}
+  sources: AgentSource[],
+  mcpServers: ReadonlySet<string> = new Set(),
+  vars: Record<string, string> = {},
+  /** Rules every agent gets after its own prompt (brain/estilo.md). */
+  sharedRules = ''
 ): Promise<LoadResult> {
+  const rules = fillPlaceholders(sharedRules.trim(), vars)
   const agents: AgentRecord[] = []
   const errors: string[] = []
-  let folders: string[] = []
-  try {
-    const entries = await readdir(agentsDir, { withFileTypes: true })
-    folders = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort()
-  } catch {
-    return { agents, errors: [`No existe la carpeta de agentes: ${agentsDir}`] }
-  }
-
   const seen = new Set<string>()
-  for (const folder of folders) {
-    const file = join(agentsDir, folder, 'agent.md')
-    let content: string
+
+  for (const source of sources) {
+    let folders: string[]
     try {
-      content = await readFile(file, 'utf8')
+      const entries = await readdir(source.dir, { withFileTypes: true })
+      folders = entries
+        .filter((e) => e.isDirectory() && !isDisabled(e.name))
+        .map((e) => e.name)
+        .sort()
     } catch {
-      continue // folder without agent.md is simply not an agent
+      errors.push(`No existe la carpeta de agentes: ${source.dir}`)
+      continue
     }
-    try {
-      const record = parseAgentFile(content, folder, mcpTools)
-      if (seen.has(record.info.id)) throw new Error(`id duplicado "${record.info.id}"`)
-      seen.add(record.info.id)
-      agents.push(record)
-    } catch (err) {
-      errors.push(`${folder}/agent.md: ${(err as Error).message}`)
+
+    for (const folder of folders) {
+      const file = join(source.dir, folder, 'agent.md')
+      let content: string
+      try {
+        content = await readFile(file, 'utf8')
+      } catch {
+        continue // a folder without agent.md is simply not an agent
+      }
+      try {
+        const record = parseAgentFile(content, folder, mcpServers, vars)
+        if (seen.has(record.info.id)) throw new Error(`id duplicado "${record.info.id}"`)
+        seen.add(record.info.id)
+        if (rules) record.spec.prompt = `${record.spec.prompt}\n\n${rules}`
+        agents.push({ ...record, builtin: source.builtin })
+      } catch (err) {
+        errors.push(`${folder}/agent.md: ${(err as Error).message}`)
+      }
     }
   }
   return { agents, errors }
@@ -141,7 +218,7 @@ export function rosterText(agents: AgentRecord[]): string {
   return agents
     .map((a) => {
       const role = a.info.role ? ` — ${a.info.role}` : ''
-      return `- subagent_type "${a.info.id}": ${a.info.name}${role}. ${a.info.description}`
+      return `- "${a.info.id}": ${a.info.name}${role}. ${a.info.description}`
     })
     .join('\n')
 }

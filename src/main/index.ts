@@ -3,91 +3,105 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
-import type { AppStatus, IncomingFile } from '@shared/types'
+import type { AppStatus, IncomingFile, ProviderId } from '@shared/types'
 import { BrainOrchestrator } from './brain/orchestrator'
 import { isInside, PermissionGate } from './brain/permissions'
-import { loadAgents, type AgentRecord } from './brain/registry'
+import { ClaudeProvider } from './brain/providers/claude'
+import { CopilotProvider } from './brain/providers/copilot'
+import { COPILOT_MISSING } from './brain/providers/toolmap'
+import type { BrainProvider } from './brain/providers/types'
+import { CANONICAL_TOOLS, loadAgents, type AgentRecord } from './brain/registry'
 import { SessionStore } from './brain/sessions'
 import { UsageStore } from './brain/usage'
-import { createFinanceServer, FINANCE_APPROVAL_TOOLS, FINANCE_SERVER, FINANCE_TOOLS, financeToolName } from './finance/server'
-import { FinanceService } from './finance/service'
-import { GoogleSheets, parseCredentials, parseSpreadsheetId, type GoogleConfig } from './finance/sheets'
-import { FinanceStore } from './finance/store'
+import { defaultConfig, loadConfig, updateConfigFile, type AppConfig } from './config'
+import { defaultHomeDir, ensureHome, homePaths } from './home'
+import { emptyCatalog, loadMcp, type McpCatalog } from './mcp'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-// In development everything lives in the project folder; a packaged app keeps
-// its editable data next to the user's profile.
-const dataRoot = app.isPackaged ? app.getPath('userData') : app.getAppPath()
-const agentsDir = join(dataRoot, 'agents')
-const brainDir = join(dataRoot, 'brain')
-const workspaceDir = join(dataRoot, 'workspace')
-const inboxDir = join(workspaceDir, 'inbox')
-const outputDir = join(workspaceDir, 'output')
-const keyFile = join(app.getPath('userData'), 'api-key.bin')
-const googleFile = join(app.getPath('userData'), 'google.bin')
+// Shipped with the app: the brain prompt, built-in agents and examples.
+const appRoot = app.getAppPath()
+const brainDir = join(appRoot, 'brain')
+const builtinAgentsDir = join(brainDir, 'agents')
+const examplesAgentsDir = join(appRoot, 'examples', 'agents')
 
-/** Built-in tool servers an agent.md can request with `mcp: [name]`. */
-const MCP_TOOLS: Record<string, string[]> = { [FINANCE_SERVER]: FINANCE_TOOLS.map(financeToolName) }
-const TRUSTED_TOOLS = new Set(
-  FINANCE_TOOLS.filter((t) => !FINANCE_APPROVAL_TOOLS.includes(t)).map(financeToolName)
-)
+// The user's own folder: agents, config, MCP servers, memory, workspace.
+const home = homePaths(defaultHomeDir())
+
+// Private app state.
+const keyFile = join(app.getPath('userData'), 'api-key.bin')
 
 let win: BrowserWindow | undefined
 let agents: AgentRecord[] = []
+let mcp: McpCatalog = emptyCatalog()
+let config: AppConfig = defaultConfig()
+let problems: string[] = []
 let apiKey: string | undefined
-let google: GoogleConfig | undefined
-let sheets: GoogleSheets | undefined
+
+const providers: Record<ProviderId, BrainProvider> = {
+  claude: new ClaudeProvider(() => apiKey),
+  copilot: new CopilotProvider()
+}
 
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 
-async function loadGoogle(): Promise<void> {
-  try {
-    google = JSON.parse(safeStorage.decryptString(await readFile(googleFile))) as GoogleConfig
-    sheets = new GoogleSheets(google)
-  } catch {
-    google = undefined
-    sheets = undefined
-  }
+/** Warnings that only matter for the chosen provider. */
+function providerWarnings(): string[] {
+  if (config.provider !== 'copilot') return []
+  return agents.flatMap((a) => {
+    const missing = (a.spec.tools ?? []).filter((t) => COPILOT_MISSING.has(t))
+    return missing.length ? [`${a.info.id}: con Copilot no existe ${missing.join(', ')}; usará solo el resto.`] : []
+  })
 }
 
-/**
- * Connects the budget spreadsheet. The connection is tested before anything is
- * saved; returns the sheet titles found so the user can see it worked.
- */
-async function connectGoogle(keyJson: string, url: string): Promise<string[]> {
-  const credentials = keyJson.trim() ? parseCredentials(keyJson) : google?.credentials
-  if (!credentials) throw new Error('Falta el archivo de clave de la cuenta de servicio.')
-  const config: GoogleConfig = { credentials, spreadsheetId: parseSpreadsheetId(url) }
-  const client = new GoogleSheets(config)
-  const titles = (await client.listSheets()).map((s) => s.title)
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('El sistema no ofrece cifrado para guardar la clave.')
-  await mkdir(dirname(googleFile), { recursive: true })
-  await writeFile(googleFile, safeStorage.encryptString(JSON.stringify(config)))
-  google = config
-  sheets = client
-  return titles
-}
-
-async function disconnectGoogle(): Promise<void> {
-  google = undefined
-  sheets = undefined
-  await rm(googleFile, { force: true })
-}
-
-async function reloadAgents(): Promise<void> {
-  const result = await loadAgents(agentsDir, MCP_TOOLS)
+/** Re-reads config.json, mcp.json and every agent.md. */
+async function reload(): Promise<void> {
+  const loaded = await loadConfig(home.configFile)
+  config = loaded.config
+  mcp = await loadMcp(home.mcpFile)
+  const mcpList = Object.keys(mcp.servers)
+  const sharedRules = await readFile(join(brainDir, 'estilo.md'), 'utf8').catch(() => '')
+  const result = await loadAgents(
+    [
+      { dir: builtinAgentsDir, builtin: true },
+      { dir: home.agentsDir, builtin: false }
+    ],
+    new Set(mcpList),
+    {
+      AGENTS_DIR: home.agentsDir,
+      MCP_SERVERS: mcpList.length ? mcpList.join(', ') : '(ninguno; se añaden en mcp.json)',
+      MCP_FILE: home.mcpFile,
+      TOOLS: CANONICAL_TOOLS.join(', '),
+      USER: config.userName || 'el usuario'
+    },
+    sharedRules
+  )
   agents = result.agents
-  for (const error of result.errors) console.warn('[agentes]', error)
+  problems = [...(loaded.error ? [loaded.error] : []), ...mcp.errors, ...result.errors, ...providerWarnings()]
+  for (const p of problems) console.warn('[config]', p)
   send('agents', agents.map((a) => a.info))
+  send('status', status())
+}
+
+let busy = (): boolean => false
+
+function status(): AppStatus {
+  return {
+    hasApiKey: Boolean(apiKey),
+    busy: busy(),
+    provider: config.provider,
+    homeDir: home.root,
+    workspaceDir: home.workspaceDir,
+    agentsDir: home.agentsDir,
+    problems
+  }
 }
 
 async function loadApiKey(): Promise<void> {
   try {
-    const encrypted = await readFile(keyFile)
-    apiKey = safeStorage.decryptString(encrypted)
+    apiKey = safeStorage.decryptString(await readFile(keyFile))
   } catch {
     apiKey = undefined
   }
@@ -111,7 +125,7 @@ async function saveApiKey(key: string): Promise<void> {
 /** Copies an incoming file into workspace/inbox and returns its new path. */
 async function receiveFile(file: IncomingFile): Promise<string> {
   const safeName = basename(file.name).replace(/[<>:"|?*\x00-\x1f]/g, '_') || 'archivo'
-  const target = join(inboxDir, `${Date.now()}-${safeName}`)
+  const target = join(home.inboxDir, `${Date.now()}-${safeName}`)
   if (file.path) await copyFile(file.path, target)
   else if (file.data) await writeFile(target, Buffer.from(file.data))
   else throw new Error(`No pude leer el archivo ${file.name}`)
@@ -151,11 +165,9 @@ function createWindow(): void {
 
 async function main(): Promise<void> {
   await app.whenReady()
-  await Promise.all([inboxDir, outputDir, agentsDir, brainDir].map((d) => mkdir(d, { recursive: true })))
+  await ensureHome(home, examplesAgentsDir)
   await loadApiKey()
-  await loadGoogle()
 
-  const finance = new FinanceService(() => sheets, new FinanceStore(join(brainDir, 'finanzas')))
   const sessions = new SessionStore(join(app.getPath('userData'), 'session.json'))
   await sessions.load()
   const usage = new UsageStore(join(app.getPath('userData'), 'usage.json'))
@@ -163,13 +175,14 @@ async function main(): Promise<void> {
   const gate = new PermissionGate((request) => send('permission', request))
   const brain = new BrainOrchestrator(
     {
-      workspaceDir,
+      workspaceDir: home.workspaceDir,
       brainPromptFile: join(brainDir, 'brain.md'),
-      memoryFile: join(brainDir, 'memory.md'),
+      memoryFile: home.memoryFile,
+      readableDirs: [home.agentsDir, builtinAgentsDir],
       getAgents: () => agents,
-      getApiKey: () => apiKey,
-      mcpServers: { [FINANCE_SERVER]: createFinanceServer(finance) },
-      trustedTools: TRUSTED_TOOLS,
+      getMcp: () => mcp,
+      getConfig: () => config,
+      getProvider: () => providers[config.provider],
       usage
     },
     sessions,
@@ -178,37 +191,41 @@ async function main(): Promise<void> {
       thought: (event) => send('thought', event),
       delta: (text) => send('delta', text),
       message: (message) => send('message', message),
-      busy: (busy) => send('busy', busy),
+      busy: (isBusy) => send('busy', isBusy),
       usage: (snapshot) => send('usage', snapshot)
     }
   )
+  busy = () => brain.busy
 
-  await reloadAgents()
+  await reload()
   let reloadTimer: NodeJS.Timeout | undefined
-  chokidar.watch(agentsDir, { ignoreInitial: true, depth: 1 }).on('all', () => {
-    clearTimeout(reloadTimer)
-    reloadTimer = setTimeout(() => void reloadAgents(), 300)
-  })
+  chokidar
+    .watch([home.agentsDir, home.configFile, home.mcpFile, builtinAgentsDir, join(brainDir, 'estilo.md')], {
+      ignoreInitial: true,
+      depth: 2
+    })
+    .on('all', () => {
+      clearTimeout(reloadTimer)
+      reloadTimer = setTimeout(() => void reload(), 300)
+    })
 
   ipcMain.handle('agents:get', () => agents.map((a) => a.info))
   ipcMain.handle('history:get', () => sessions.messages)
   ipcMain.handle('usage:get', () => usage.snapshot())
-  ipcMain.handle(
-    'status:get',
-    (): AppStatus => ({
-      hasApiKey: Boolean(apiKey),
-      busy: brain.busy,
-      workspaceDir,
-      agentsDir,
-      google: google
-        ? { connected: true, email: google.credentials.client_email, spreadsheetId: google.spreadsheetId }
-        : { connected: false }
-    })
-  )
-  ipcMain.handle('google:connect', (_e, keyJson: string, url: string) =>
-    connectGoogle(String(keyJson ?? ''), String(url ?? ''))
-  )
-  ipcMain.handle('google:disconnect', () => disconnectGoogle())
+  ipcMain.handle('status:get', () => status())
+  ipcMain.handle('provider:check', () => providers[config.provider].auth())
+  ipcMain.handle('provider:set', async (_e, provider: ProviderId) => {
+    if (provider !== 'claude' && provider !== 'copilot') throw new Error(`Proveedor desconocido: ${String(provider)}`)
+    if (provider === config.provider) return
+    if (brain.busy) throw new Error('Espera a que el Cerebro termine antes de cambiar de proveedor.')
+    await updateConfigFile(home.configFile, { provider })
+    // A conversation cannot move between providers.
+    await sessions.reset()
+    await usage.clearLimits()
+    send('reset', null)
+    send('usage', usage.snapshot())
+    await reload()
+  })
   ipcMain.handle('brain:send', async (_e, prompt: string, files: IncomingFile[]) => {
     const text = String(prompt ?? '').trim()
     if (!text && files.length === 0) return
@@ -227,7 +244,7 @@ async function main(): Promise<void> {
   ipcMain.handle('permission:respond', (_e, id: string, allow: boolean) => gate.respond(id, allow === true))
   ipcMain.handle('path:open', async (_e, target: string) => {
     // Only folders the app owns can be opened from the UI.
-    if (isInside(target, workspaceDir) || isInside(target, agentsDir)) await shell.openPath(target)
+    if (isInside(target, home.root)) await shell.openPath(target)
   })
 
   createWindow()
@@ -238,6 +255,10 @@ async function main(): Promise<void> {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  void Promise.all(Object.values(providers).map((p) => p.dispose?.()))
 })
 
 void main()

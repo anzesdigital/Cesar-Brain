@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BRAIN_ID } from '@shared/types'
+import { BRAIN_ID, PROVIDERS, type ProviderAuth, type ProviderId } from '@shared/types'
 import { InputBar } from './chat/InputBar'
 import { OutputPanel } from './chat/OutputPanel'
 import { Office } from './office/Office'
@@ -46,98 +46,101 @@ function PermissionModal() {
   )
 }
 
-function GoogleSettings() {
-  const status = useStore((s) => s.status)
-  const setStatus = useStore((s) => s.setStatus)
-  const [keyJson, setKeyJson] = useState('')
-  const [keyName, setKeyName] = useState('')
-  const [url, setUrl] = useState('')
-  const [working, setWorking] = useState(false)
-  const [error, setError] = useState('')
-  const [found, setFound] = useState<string[]>([])
-  const connected = status?.google.connected ?? false
+function cleanError(err: unknown): string {
+  // Electron prefixes IPC errors; keep only the human part.
+  return (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
 
-  const connect = async (): Promise<void> => {
-    setWorking(true)
-    setError('')
-    setFound([])
+function ProviderSettings() {
+  const status = useStore((s) => s.status)
+  const busy = useStore((s) => s.busy)
+  const [auth, setAuth] = useState<ProviderAuth>()
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
+  const provider = status?.provider
+
+  const check = async (): Promise<void> => {
+    setChecking(true)
     try {
-      setFound(await window.brain.connectGoogle(keyJson, url))
-      setStatus(await window.brain.getStatus())
-    } catch (err) {
-      // Electron prefixes IPC errors; keep only the human part.
-      setError((err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+      setAuth(await window.brain.checkProvider())
     } finally {
-      setWorking(false)
+      setChecking(false)
     }
   }
 
-  const disconnect = async (): Promise<void> => {
-    await window.brain.disconnectGoogle()
-    setFound([])
-    setStatus(await window.brain.getStatus())
+  useEffect(() => {
+    setAuth(undefined)
+    if (provider) void check()
+  }, [provider])
+
+  const choose = async (id: ProviderId): Promise<void> => {
+    setError('')
+    try {
+      await window.brain.setProvider(id)
+    } catch (err) {
+      setError(cleanError(err))
+    }
   }
 
   return (
-    <section className="settings-section">
-      <h3>Google Sheets (presupuesto)</h3>
-      {connected ? (
-        <p className="modal-ok">
-          Conectado como <strong>{status?.google.email}</strong>
-        </p>
-      ) : (
-        <details>
-          <summary>Cómo conectarlo (una sola vez, unos 10 minutos)</summary>
-          <ol>
-            <li>Entra en console.cloud.google.com y crea un proyecto.</li>
-            <li>En "APIs y servicios" activa la "Google Sheets API".</li>
-            <li>En "Credenciales" crea una "Cuenta de servicio".</li>
-            <li>Dentro de la cuenta: Claves → Agregar clave → JSON. Se descarga un archivo.</li>
-            <li>Abre tu hoja de presupuesto → Compartir → pega el correo de la cuenta de servicio como Editor.</li>
-            <li>Carga aquí el archivo JSON y pega la dirección de la hoja.</li>
-          </ol>
-        </details>
-      )}
-      <label htmlFor="google-key">Clave de la cuenta de servicio (.json)</label>
-      <input
-        id="google-key"
-        type="file"
-        accept=".json,application/json"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (!file) return
-          setKeyName(file.name)
-          void file.text().then(setKeyJson)
-        }}
-      />
-      {connected && !keyName && <p className="modal-note">Ya hay una clave guardada; solo cárgala si quieres cambiarla.</p>}
-      <label htmlFor="google-url">Dirección de la hoja</label>
-      <input
-        id="google-url"
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://docs.google.com/spreadsheets/d/…"
-        autoComplete="off"
-      />
-      <p className="modal-note">Para probar sin riesgo, conecta primero una copia de tu hoja.</p>
-      {error && <p className="inputbar-error">{error}</p>}
-      {found.length > 0 && <p className="modal-ok">Conexión correcta. Hojas: {found.join(', ')}</p>}
-      <div className="modal-actions">
-        {connected && (
-          <button type="button" className="btn-ghost" onClick={() => void disconnect()}>
-            Desconectar
+    <section className="settings-block">
+      <h3>Proveedor</h3>
+      <div className="usage-ranges" role="group" aria-label="Proveedor">
+        {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => (
+          <button
+            type="button"
+            key={id}
+            className={`btn-ghost${id === provider ? ' usage-range-on' : ''}`}
+            aria-pressed={id === provider}
+            disabled={busy}
+            onClick={() => void choose(id)}
+          >
+            {PROVIDERS[id]}
           </button>
-        )}
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={working || !url.trim() || (!keyJson && !connected)}
-          onClick={() => void connect()}
-        >
-          {working ? 'Probando…' : 'Conectar y probar'}
+        ))}
+      </div>
+      <p className="modal-note">Cambiar de proveedor empieza una conversación nueva. Se guarda en config.json.</p>
+      {error && <p className="inputbar-error">{error}</p>}
+      {auth ? (
+        <p className={auth.ready ? 'modal-ok' : 'inputbar-error'}>{auth.detail}</p>
+      ) : (
+        <p className="modal-note">{checking ? 'Comprobando sesión…' : ''}</p>
+      )}
+      <button type="button" className="btn-ghost" disabled={checking} onClick={() => void check()}>
+        Volver a comprobar
+      </button>
+    </section>
+  )
+}
+
+function AgentsSettings() {
+  const status = useStore((s) => s.status)
+  if (!status) return null
+  return (
+    <section className="settings-section">
+      <h3>Agentes y configuración</h3>
+      <p className="modal-note">
+        Cada agente es una carpeta con un <code>agent.md</code> dentro de <code>{status.agentsDir}</code>. Añade, edita o
+        borra carpetas y el equipo se actualiza solo. Una carpeta que empieza por <code>_</code> queda desactivada.
+      </p>
+      <div className="modal-actions">
+        <button type="button" className="btn-ghost" onClick={() => void window.brain.openPath(status.agentsDir)}>
+          Abrir carpeta de agentes
+        </button>
+        <button type="button" className="btn-ghost" onClick={() => void window.brain.openPath(status.homeDir)}>
+          Abrir carpeta de configuración
         </button>
       </div>
+      {status.problems.length > 0 && (
+        <>
+          <p className="inputbar-error">Hay cosas que revisar:</p>
+          <ul className="settings-problems">
+            {status.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   )
 }
@@ -152,9 +155,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     try {
       await window.brain.setApiKey(value)
       setStatus(await window.brain.getStatus())
-      onClose()
+      setKey('')
     } catch (err) {
-      setError((err as Error).message)
+      setError(cleanError(err))
     }
   }
 
@@ -162,34 +165,41 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" role="dialog" aria-labelledby="settings-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="settings-title">Ajustes</h2>
-        <label htmlFor="api-key">Clave de API de Anthropic</label>
-        <input
-          id="api-key"
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={status?.hasApiKey ? 'Hay una clave guardada' : 'sk-ant-…'}
-          autoComplete="off"
-        />
-        <p className="modal-note">
-          Se guarda cifrada en este equipo. Si no pones clave, se intenta usar la sesión de Claude Code que ya
-          exista en este equipo.
-        </p>
-        {error && <p className="inputbar-error">{error}</p>}
+        <ProviderSettings />
+        {status?.provider === 'claude' && (
+          <section className="settings-section">
+            <label htmlFor="api-key">Clave de API de Anthropic</label>
+            <input
+              id="api-key"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={status?.hasApiKey ? 'Hay una clave guardada' : 'sk-ant-…'}
+              autoComplete="off"
+            />
+            <p className="modal-note">
+              Se guarda cifrada en este equipo. Si no pones clave, se intenta usar la sesión de Claude Code que ya
+              exista en este equipo.
+            </p>
+            {error && <p className="inputbar-error">{error}</p>}
+            <div className="modal-actions">
+              {status?.hasApiKey && (
+                <button type="button" className="btn-ghost" onClick={() => void save('')}>
+                  Borrar clave
+                </button>
+              )}
+              <button type="button" className="btn-primary" disabled={!key.trim()} onClick={() => void save(key)}>
+                Guardar clave
+              </button>
+            </div>
+          </section>
+        )}
+        <AgentsSettings />
         <div className="modal-actions">
-          {status?.hasApiKey && (
-            <button type="button" className="btn-ghost" onClick={() => void save('')}>
-              Borrar clave
-            </button>
-          )}
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cerrar
           </button>
-          <button type="button" className="btn-primary" disabled={!key.trim()} onClick={() => void save(key)}>
-            Guardar
-          </button>
         </div>
-        <GoogleSettings />
       </div>
     </div>
   )
@@ -211,6 +221,8 @@ export function App() {
     })
     const unsubscribe = [
       api.onAgents(s.setAgents),
+      api.onStatus(s.setStatus),
+      api.onReset(s.clearConversation),
       api.onThought(s.addThought),
       api.onDelta(s.setStreamText),
       api.onMessage(s.addMessage),

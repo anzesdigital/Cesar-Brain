@@ -131,8 +131,15 @@ function Meter({ limit, now }: { limit: UsageLimit; now: number }) {
 }
 
 function Limits({ usage, now }: { usage: UsageSnapshot; now: number }) {
+  const copilot = usage.limitsProvider === 'copilot'
   if (usage.limitsAvailable === false) {
-    return <p className="modal-note">Esta cuenta usa clave de API: no tiene límites de plan, se paga por uso.</p>
+    return (
+      <p className="modal-note">
+        {copilot
+          ? 'Tu plan de Copilot no tiene límite de premium requests.'
+          : 'Esta cuenta usa clave de API: no tiene límites de plan, se paga por uso.'}
+      </p>
+    )
   }
   if (usage.limits.length === 0) {
     return <p className="modal-note">Aún no hay datos. Aparecen después del primer encargo al Cerebro.</p>
@@ -145,7 +152,7 @@ function Limits({ usage, now }: { usage: UsageSnapshot; now: number }) {
       {usage.limitsAt && (
         <p className="modal-note">
           Leído a las {new Date(usage.limitsAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}. Incluye
-          todo lo que gastas con tu cuenta de Claude, no solo esta app.
+          todo lo que gastas con tu cuenta de {copilot ? 'GitHub Copilot' : 'Claude'}, no solo esta app.
         </p>
       )}
     </>
@@ -267,7 +274,8 @@ export function UsagePanel({ onClose }: { onClose: () => void }) {
       today: columns[columns.length - 1].total,
       tokens: columns.reduce((sum, c) => sum + c.total, 0),
       runs: inRange.reduce((sum, d) => sum + d.runs, 0),
-      cost: inRange.reduce((sum, d) => sum + d.costUsd, 0)
+      cost: inRange.reduce((sum, d) => sum + d.costUsd, 0),
+      premium: inRange.reduce((sum, d) => sum + (d.premiumRequests ?? 0), 0)
     }
   }, [usage, agents, range])
 
@@ -317,10 +325,18 @@ export function UsagePanel({ onClose }: { onClose: () => void }) {
               <dt>Encargos</dt>
               <dd>{view.runs}</dd>
             </div>
-            <div>
-              <dt>Coste estimado</dt>
-              <dd>{view.cost.toLocaleString('es', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })}</dd>
-            </div>
+            {view.premium > 0 || view.cost === 0 ? (
+              <div>
+                <dt>Premium requests</dt>
+                <dd>{view.premium.toLocaleString('es', { maximumFractionDigits: 1 })}</dd>
+              </div>
+            ) : null}
+            {view.cost > 0 || view.premium === 0 ? (
+              <div>
+                <dt>Coste estimado</dt>
+                <dd>{view.cost.toLocaleString('es', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })}</dd>
+              </div>
+            ) : null}
           </dl>
 
           <ul className="usage-legend">
@@ -333,8 +349,8 @@ export function UsagePanel({ onClose }: { onClose: () => void }) {
           </ul>
           <Chart columns={view.columns} series={view.series} />
           <p className="modal-note">
-            Tokens nuevos de cada día (entrada, salida y caché escrita), sin contar lecturas de caché. El coste es una estimación a precio de lista; con
-            suscripción no se cobra aparte.
+            Tokens nuevos de cada día (entrada, salida y caché escrita), sin contar lecturas de caché. El coste (Claude) es una estimación a precio de lista; con
+            suscripción no se cobra aparte. Las premium requests (Copilot) son las que descuenta tu plan.
           </p>
 
           <details className="usage-table">

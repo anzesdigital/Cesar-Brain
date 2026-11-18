@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import type { ChatMessage } from '@shared/types'
+import { PROVIDERS, type ChatMessage } from '@shared/types'
 import { useStore } from '../store'
 import { UsageButton } from '../usage/UsagePanel'
 
@@ -63,7 +63,10 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
   return (
     <section className="output" aria-label="Conversación">
       <header className="output-header">
-        <h1>Cesar Brain</h1>
+        <h1>
+          Cesar Brain
+          {status && <span className="output-provider">{PROVIDERS[status.provider]}</span>}
+        </h1>
         <div>
           {status && (
             <button type="button" className="btn-ghost" onClick={() => void window.brain.openPath(status.workspaceDir)}>
@@ -74,8 +77,13 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
             Nueva
           </button>
           <UsageButton onClick={onUsage} />
-          <button type="button" className="btn-ghost" onClick={onSettings}>
-            Ajustes
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onSettings}
+            title={status?.problems.length ? `${status.problems.length} cosas que revisar en los agentes o la configuración` : undefined}
+          >
+            Ajustes{status?.problems.length ? ' ⚠' : ''}
           </button>
         </div>
       </header>

@@ -1,9 +1,9 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { decide, isInside } from '../src/main/brain/permissions'
-import { loadAgents, parseAgentFile, rosterText } from '../src/main/brain/registry'
+import { fillPlaceholders, loadAgents, parseAgentFile, rosterText } from '../src/main/brain/registry'
 import { limitsFromPlan, RunMeter, UsageStore } from '../src/main/brain/usage'
 import { firstSentence, MAX_BUBBLE, permissionSummary, thoughtForTool, truncate } from '../src/main/brain/thoughts'
 
@@ -21,14 +21,15 @@ Eres Pía.`
 
 describe('parseAgentFile', () => {
   it('parses a complete agent', () => {
-    const { info, definition } = parseAgentFile(VALID, 'carpeta')
+    const { info, spec } = parseAgentFile(VALID, 'carpeta')
     expect(info).toMatchObject({ id: 'prueba', name: 'Pía', role: 'Tester' })
     expect(info.sprite.hair).toBe('#112233')
     expect(info.sprite.shirt).toMatch(/^#[0-9a-f]{6}$/i)
-    expect(definition).toEqual({
+    expect(spec).toEqual({
       description: 'Úsala para probar.',
       prompt: 'Eres Pía.',
       tools: ['Read'],
+      mcp: [],
       model: 'haiku'
     })
   })
@@ -36,7 +37,7 @@ describe('parseAgentFile', () => {
   it('falls back to the folder name for the id', () => {
     const record = parseAgentFile('---\ndescription: algo\n---\nHola', 'mi-agente')
     expect(record.info.id).toBe('mi-agente')
-    expect(record.definition.tools).toBeUndefined()
+    expect(record.spec.tools).toBeUndefined()
   })
 
   it.each([
@@ -44,49 +45,73 @@ describe('parseAgentFile', () => {
     ['---\nid: cerebro\ndescription: x\n---\ncuerpo', /reservado/],
     ['---\nid: ok\n---\ncuerpo', /description/],
     ['---\nid: ok\ndescription: x\n---\n', /cuerpo/],
-    ['---\nid: ok\ndescription: x\ntools: Read\n---\ncuerpo', /tools/]
+    ['---\nid: ok\ndescription: x\ntools: Read\n---\ncuerpo', /tools/],
+    ['---\nid: ok\ndescription: x\ntools: [Leer]\n---\ncuerpo', /herramienta desconocida: Leer/]
   ])('rejects invalid file %#', (content, reason) => {
     expect(() => parseAgentFile(content, 'carpeta')).toThrow(reason)
   })
 })
 
 describe('loadAgents', () => {
-  it('loads the shipped agents without errors', async () => {
-    const mcp = { presupuesto: ['mcp__presupuesto__estado'] }
-    const { agents, errors } = await loadAgents(resolve(__dirname, '../agents'), mcp)
+  const builtin = { dir: resolve(__dirname, '../brain/agents'), builtin: true }
+  const examples = { dir: resolve(__dirname, '../examples/agents'), builtin: false }
+
+  it('loads the built-in and example agents without errors', async () => {
+    const { agents, errors } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
     expect(errors).toEqual([])
-    expect(agents.map((a) => a.info.id).sort()).toEqual(['documentos', 'investigador', 'presupuesto'])
-    expect(rosterText(agents)).toContain('subagent_type "investigador": Iris')
-    const nora = agents.find((a) => a.info.id === 'presupuesto')!
-    expect(nora.definition.tools).toEqual(['Read', 'Glob', 'mcp__presupuesto__estado'])
-    expect(nora.definition.mcpServers).toEqual(['presupuesto'])
+    expect(agents.map((a) => a.info.id)).toEqual(['configurador', 'documentos', 'investigador'])
+    expect(agents[0].builtin).toBe(true)
+    expect(agents[1].builtin).toBe(false)
+    expect(agents[0].spec.prompt).toContain('/a/<id>/agent.md')
+    expect(agents[1].spec.prompt).toContain('ayuda a Ana')
+    expect(agents[1].info.description).toContain('que Ana adjunta')
+    expect(rosterText(agents)).toContain('- "investigador": Iris')
   })
 
-  it('rejects an agent that asks for an unknown tool server', () => {
+  it('keeps the first agent on a repeated id, skips disabled folders, and reports bad files', async () => {
+    const user = await mkdtemp(join(tmpdir(), 'agentes-'))
+    const write = async (folder: string, content: string): Promise<void> => {
+      await mkdir(join(user, folder), { recursive: true })
+      await writeFile(join(user, folder, 'agent.md'), content, 'utf8')
+    }
+    await write('configurador', '---\ndescription: copia\n---\nOtra')
+    await write('_apagado', '---\ndescription: x\n---\ncuerpo')
+    await write('roto', '---\nid: roto\n---\ncuerpo')
+    await write('con-mcp', '---\ndescription: x\nmcp: [banco]\n---\ncuerpo')
+    await write('nuevo', VALID)
+
+    const { agents, errors } = await loadAgents([builtin, { dir: user, builtin: false }], new Set(['banco']))
+    expect(agents.map((a) => a.info.id)).toEqual(['configurador', 'con-mcp', 'prueba'])
+    expect(agents.find((a) => a.info.id === 'con-mcp')!.spec.mcp).toEqual(['banco'])
+    expect(errors).toHaveLength(2)
+    expect(errors.join('\n')).toMatch(/id duplicado "configurador"/)
+    expect(errors.join('\n')).toMatch(/roto\/agent.md: falta "description"/)
+  })
+
+  it('rejects an agent that asks for an unknown MCP server', () => {
     expect(() => parseAgentFile('---\ndescription: x\nmcp: [banco]\n---\ncuerpo', 'a-b')).toThrow(/mcp desconocido/)
   })
 
-  it('lets trusted built-in tools run and asks for the rest', () => {
-    const trusted = new Set(['mcp__presupuesto__estado'])
-    expect(decide('mcp__presupuesto__estado', {}, '/ws', trusted)).toBe('allow')
-    expect(decide('mcp__presupuesto__aplicar_presupuesto', {}, '/ws', trusted)).toBe('ask')
-  })
-
-  it('writes budget bubbles and permission text', () => {
-    expect(thoughtForTool('mcp__presupuesto__registrar_movimientos', { movimientos: [1, 2, 3] })).toBe('Anotando 3 movimientos')
-    expect(thoughtForTool('mcp__presupuesto__guardar_pendientes', { pendientes: [1] })).toBe('Tengo 1 duda de categoría')
-    expect(
-      permissionSummary('mcp__presupuesto__aplicar_presupuesto', {
-        periodo: 'Budget Junio',
-        cambios: [{ categoria: 'Compras', presupuesto: 150 }]
-      })
-    ).toContain('Compras → 150 €')
-  })
-
   it('reports a missing folder instead of throwing', async () => {
-    const { agents, errors } = await loadAgents(resolve(__dirname, 'no-existe'))
+    const { agents, errors } = await loadAgents([{ dir: resolve(__dirname, 'no-existe'), builtin: false }])
     expect(agents).toEqual([])
     expect(errors).toHaveLength(1)
+  })
+
+  it('adds the shared rules to every agent', async () => {
+    const { agents } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana' }, 'Sé breve, {{USER}}.')
+    expect(agents.length).toBeGreaterThan(0)
+    for (const a of agents) expect(a.spec.prompt.endsWith('\n\nSé breve, Ana.')).toBe(true)
+  })
+
+  it('ships brain/estilo.md with the cost rules', async () => {
+    const text = await readFile(resolve(__dirname, '../brain/estilo.md'), 'utf8')
+    expect(text).toMatch(/gastar poco/i)
+    expect(text).toMatch(/No expliques el proceso/)
+  })
+
+  it('fills known placeholders and leaves the rest', () => {
+    expect(fillPlaceholders('Hola {{USER}}, {{OTRO}}', { USER: 'Ana' })).toBe('Hola Ana, {{OTRO}}')
   })
 })
 
@@ -124,16 +149,34 @@ describe('permissions', () => {
   })
 
   it('allows delegation, web and workspace files; asks for the rest', () => {
-    expect(decide('Agent', {}, ws)).toBe('allow')
-    expect(decide('WebSearch', { query: 'x' }, ws)).toBe('allow')
-    expect(decide('Read', { file_path: 'inbox/a.pdf' }, ws)).toBe('allow')
-    expect(decide('Write', { file_path: join(ws, 'output', 'r.md') }, ws)).toBe('allow')
-    expect(decide('Glob', { pattern: '**/*.pdf' }, ws)).toBe('allow')
-    expect(decide('Write', { file_path: '../fuera.txt' }, ws)).toBe('ask')
-    expect(decide('Read', { file_path: resolve('/etc/passwd') }, ws)).toBe('ask')
-    expect(decide('Write', {}, ws)).toBe('ask')
-    expect(decide('Bash', { command: 'dir' }, ws)).toBe('ask')
-    expect(decide('mcp__x__y', {}, ws)).toBe('ask')
+    const ctx = { workspaceDir: ws }
+    expect(decide('Agent', {}, ctx)).toBe('allow')
+    expect(decide('WebSearch', { query: 'x' }, ctx)).toBe('allow')
+    expect(decide('Read', { file_path: 'inbox/a.pdf' }, ctx)).toBe('allow')
+    expect(decide('Write', { file_path: join(ws, 'output', 'r.md') }, ctx)).toBe('allow')
+    expect(decide('Glob', { pattern: '**/*.pdf' }, ctx)).toBe('allow')
+    expect(decide('Write', { file_path: '../fuera.txt' }, ctx)).toBe('ask')
+    expect(decide('Read', { file_path: resolve('/etc/passwd') }, ctx)).toBe('ask')
+    expect(decide('Write', {}, ctx)).toBe('ask')
+    expect(decide('Bash', { command: 'dir' }, ctx)).toBe('ask')
+    expect(decide('mcp__x__y', {}, ctx)).toBe('ask')
+  })
+
+  it('reads the agents folder freely but asks before writing there', () => {
+    const agentsDir = resolve('/tmp/agentes')
+    const ctx = { workspaceDir: ws, readableDirs: [agentsDir] }
+    expect(decide('Read', { file_path: join(agentsDir, 'a', 'agent.md') }, ctx)).toBe('allow')
+    expect(decide('Glob', { pattern: '*/agent.md', path: agentsDir }, ctx)).toBe('allow')
+    expect(decide('Write', { file_path: join(agentsDir, 'b', 'agent.md') }, ctx)).toBe('ask')
+  })
+
+  it('lets tools of trusted MCP servers run', () => {
+    const ctx = { workspaceDir: ws, trustedServers: new Set(['banco']) }
+    expect(decide('mcp__banco__saldo', {}, ctx)).toBe('allow')
+    expect(decide('mcp__otro__borrar', {}, ctx)).toBe('ask')
+    const some = { workspaceDir: ws, trustedTools: new Set(['mcp__banco__saldo']) }
+    expect(decide('mcp__banco__saldo', {}, some)).toBe('allow')
+    expect(decide('mcp__banco__transferir', {}, some)).toBe('ask')
   })
 })
 
@@ -179,7 +222,7 @@ describe('usage', () => {
     const store = new UsageStore(join(dir, 'usage.json'), () => now)
     const count = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }
     await store.recordRun({ cerebro: count }, 's1', 0.1)
-    await store.recordRun({ cerebro: count, presupuesto: count }, 's1', 0.25)
+    await store.recordRun({ cerebro: count, presupuesto: count }, 's1', 0.25, false, 2)
     now = new Date(2026, 10, 14, 9)
     await store.recordRun({ cerebro: count }, 's2', 0.05)
 
@@ -194,10 +237,22 @@ describe('usage', () => {
     expect(days[1].costUsd).toBeCloseTo(0.05)
     expect(days[0].agents.cerebro.input).toBe(20)
     expect(days[0].agents.presupuesto.output).toBe(5)
+    expect(days[0].premiumRequests).toBe(2)
+    expect(days[1].premiumRequests).toBeUndefined()
 
     // A resumed session seen for the first time only sets the starting point.
     await reloaded.recordRun({ cerebro: count }, 'viejo', 6, true)
     await reloaded.recordRun({ cerebro: count }, 'viejo', 6.5, true)
     expect(reloaded.snapshot().days[1].costUsd).toBeCloseTo(0.55)
+  })
+
+  it('keeps limits with their provider and clears them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'uso-'))
+    const store = new UsageStore(join(dir, 'usage.json'))
+    await store.setLimits('copilot', [{ id: 'premium', label: 'P', percent: 30 }], true, 'Copilot')
+    expect(store.snapshot()).toMatchObject({ limitsProvider: 'copilot', plan: 'Copilot', limitsAvailable: true })
+    await store.clearLimits()
+    expect(store.snapshot().limits).toEqual([])
+    expect(store.snapshot().limitsProvider).toBeUndefined()
   })
 })

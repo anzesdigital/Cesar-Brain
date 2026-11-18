@@ -58,64 +58,11 @@ export function thoughtForTool(toolName: string, input: Record<string, unknown>)
     case 'PowerShell':
       return truncate(`Ejecutando: ${str(input.description) || str(input.command)}`)
     default:
-      if (toolName.startsWith('mcp__presupuesto__')) {
-        return truncate(budgetThought(toolName.slice('mcp__presupuesto__'.length), input))
-      }
       if (toolName.startsWith('mcp__')) {
         return truncate(`Usando ${toolName.split('__').slice(1).join(' › ')}`)
       }
       return truncate(`Usando ${toolName}`)
   }
-}
-
-function count(value: unknown, one: string, many: string): string {
-  const n = Array.isArray(value) ? value.length : 0
-  return n === 1 ? `1 ${one}` : `${n} ${many}`
-}
-
-function budgetThought(tool: string, input: Record<string, unknown>): string {
-  const periodo = str(input.periodo).replace(/^Budget\s+/i, '')
-  switch (tool) {
-    case 'estado':
-      return 'Mirando cómo va el presupuesto'
-    case 'listar_movimientos':
-      return `Repasando movimientos${periodo ? ` de ${periodo}` : ''}`
-    case 'buscar_reglas':
-      return 'Viendo si ya conozco estos comercios'
-    case 'guardar_regla':
-      return `Me apunto: ${str(input.patron)} → ${str(input.categoria)}`
-    case 'registrar_movimientos':
-      return `Anotando ${count(input.movimientos, 'movimiento', 'movimientos')}`
-    case 'guardar_pendientes':
-      return `Tengo ${count(input.pendientes, 'duda', 'dudas')} de categoría`
-    case 'resolver_pendiente':
-      return input.descartar ? 'Descartando un pendiente' : `Resuelto: va a ${str(input.categoria)}`
-    case 'comparar_presupuesto':
-      return `Comparando ${periodo || 'el periodo'} con lo gastado`
-    case 'crear_periodo':
-      return `Abriendo periodo desde ${str(input.inicio)}`
-    case 'aplicar_presupuesto':
-      return 'Aplicando el presupuesto aprobado'
-    default:
-      return `Presupuesto: ${tool}`
-  }
-}
-
-function budgetPermission(tool: string, input: Record<string, unknown>): string | undefined {
-  if (tool === 'crear_periodo') {
-    const fin = str(input.fin) ? ` hasta ${str(input.fin)}` : ' (fin provisional el día 24)'
-    return `Abrir un periodo nuevo en tu hoja de Google desde ${str(input.inicio)}${fin}. Duplica la plantilla, copia categorías y presupuesto del periodo anterior y lo cierra el día previo.`
-  }
-  if (tool === 'aplicar_presupuesto') {
-    const lines: string[] = []
-    const cambios = Array.isArray(input.cambios) ? (input.cambios as Record<string, unknown>[]) : []
-    const nuevas = Array.isArray(input.nuevas) ? (input.nuevas as Record<string, unknown>[]) : []
-    for (const c of cambios) lines.push(`${str(c.categoria)} → ${String(c.presupuesto)} €`)
-    for (const n of nuevas) lines.push(`Nueva categoría ${str(n.nombre)} → ${String(n.presupuesto)} €`)
-    const where = str(input.periodo) || 'el periodo actual'
-    return `Cambiar el presupuesto de ${where} en tu hoja de Google:\n${lines.join('\n')}`
-  }
-  return undefined
 }
 
 /** Sentence shown to the user when a tool needs approval. */
@@ -130,9 +77,10 @@ export function permissionSummary(toolName: string, input: Record<string, unknow
     case 'PowerShell':
       return `Ejecutar el comando: ${str(input.command)}`
     default:
-      if (toolName.startsWith('mcp__presupuesto__')) {
-        const summary = budgetPermission(toolName.slice('mcp__presupuesto__'.length), input)
-        if (summary) return summary
+      if (toolName.startsWith('mcp__')) {
+        const args = JSON.stringify(input)
+        const shown = args.length > 300 ? args.slice(0, 299) + '…' : args
+        return `Usar ${toolName.split('__').slice(1).join(' › ')} con ${shown}`
       }
       return `Usar la herramienta ${toolName}`
   }

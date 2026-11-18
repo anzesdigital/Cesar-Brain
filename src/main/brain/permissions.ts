@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolve, sep } from 'node:path'
 import type { PermissionRequest } from '@shared/types'
+import { mcpServerOf } from '../mcp'
 
 export type Decision = 'allow' | 'ask'
 
@@ -19,25 +20,35 @@ export function isInside(target: string, root: string): boolean {
   return t === r || t.startsWith(r.endsWith(sep) ? r : r + sep)
 }
 
+export interface PolicyContext {
+  workspaceDir: string
+  /** Folders that may be read without asking (e.g. the agents folder). */
+  readableDirs?: readonly string[]
+  /** MCP servers whose tools run without asking. */
+  trustedServers?: ReadonlySet<string>
+  /** Single MCP tools (`mcp__srv__tool`) that run without asking. */
+  trustedTools?: ReadonlySet<string>
+}
+
 /**
- * Policy: delegation and web are free; file access is free only inside the
- * workspace; everything else (commands, files elsewhere, unknown tools) asks.
+ * Policy, on canonical tool names: delegation and web are free; file reads are
+ * free inside the workspace and readable folders, file writes only inside the
+ * workspace; tools of trusted MCP servers are free; everything else asks.
  */
-export function decide(
-  toolName: string,
-  input: Record<string, unknown>,
-  workspaceDir: string,
-  /** Tools of built-in servers that may run without asking. */
-  trustedTools: ReadonlySet<string> = new Set()
-): Decision {
-  if (DELEGATION.has(toolName) || WEB.has(toolName) || trustedTools.has(toolName)) return 'allow'
+export function decide(toolName: string, input: Record<string, unknown>, ctx: PolicyContext): Decision {
+  if (DELEGATION.has(toolName) || WEB.has(toolName)) return 'allow'
+  const server = mcpServerOf(toolName)
+  if (server !== undefined) return ctx.trustedServers?.has(server) || ctx.trustedTools?.has(toolName) ? 'allow' : 'ask'
   if (FILE_READ.has(toolName) || FILE_WRITE.has(toolName)) {
     const raw = input.file_path ?? input.path
     if (typeof raw !== 'string' || !raw) {
       // Glob/Grep without a path search the working directory (the workspace).
       return FILE_READ.has(toolName) ? 'allow' : 'ask'
     }
-    return isInside(resolve(workspaceDir, raw), workspaceDir) ? 'allow' : 'ask'
+    const target = resolve(ctx.workspaceDir, raw)
+    if (isInside(target, ctx.workspaceDir)) return 'allow'
+    if (FILE_READ.has(toolName) && (ctx.readableDirs ?? []).some((d) => isInside(target, d))) return 'allow'
+    return 'ask'
   }
   return 'ask'
 }

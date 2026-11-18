@@ -48,12 +48,30 @@ export interface IncomingFile {
   data?: ArrayBuffer
 }
 
+export type ProviderId = 'claude' | 'copilot'
+
+export const PROVIDERS: Record<ProviderId, string> = {
+  claude: 'Claude',
+  copilot: 'GitHub Copilot'
+}
+
+/** Whether the chosen provider can run, and what to do if not. */
+export interface ProviderAuth {
+  provider: ProviderId
+  ready: boolean
+  /** Human sentence: who is signed in, or how to sign in. */
+  detail: string
+}
+
 export interface AppStatus {
   hasApiKey: boolean
   busy: boolean
+  provider: ProviderId
+  homeDir: string
   workspaceDir: string
   agentsDir: string
-  google: { connected: boolean; email?: string; spreadsheetId?: string }
+  /** Problems found while reading config.json, mcp.json or agent files. */
+  problems: string[]
 }
 
 export interface TokenCount {
@@ -69,11 +87,13 @@ export interface UsageDay {
   runs: number
   /** Estimated cost at list prices; not a bill. */
   costUsd: number
+  /** Copilot premium requests spent (provider "copilot" only). */
+  premiumRequests?: number
   /** Tokens per agent id (the brain included). */
   agents: Record<string, TokenCount>
 }
 
-/** One plan limit window, as the Claude account reports it. */
+/** One plan limit window, as the provider account reports it. */
 export interface UsageLimit {
   id: string
   label: string
@@ -91,6 +111,8 @@ export interface UsageSnapshot {
   /** False when the account has no plan limits (API key). Undefined until first read. */
   limitsAvailable?: boolean
   plan?: string
+  /** Provider the limits were read from. */
+  limitsProvider?: ProviderId
 }
 
 export interface BrainApi {
@@ -103,13 +125,17 @@ export interface BrainApi {
   stop(): Promise<void>
   newConversation(): Promise<void>
   setApiKey(key: string): Promise<void>
-  /** Tests and saves the Google Sheets connection; resolves with the sheet titles found. */
-  connectGoogle(keyJson: string, sheetUrl: string): Promise<string[]>
-  disconnectGoogle(): Promise<void>
+  /** Switches provider (saved in config.json); starts a new conversation. */
+  setProvider(provider: ProviderId): Promise<void>
+  /** Checks sign-in for the current provider (may take a few seconds). */
+  checkProvider(): Promise<ProviderAuth>
   respondPermission(id: string, allow: boolean): Promise<void>
   openPath(path: string): Promise<void>
   pathForFile(file: File): string
   onAgents(cb: (agents: AgentInfo[]) => void): () => void
+  onStatus(cb: (status: AppStatus) => void): () => void
+  /** The conversation was reset from the main process (e.g. provider switch). */
+  onReset(cb: () => void): () => void
   onThought(cb: (t: ThoughtEvent) => void): () => void
   onDelta(cb: (text: string) => void): () => void
   onMessage(cb: (m: ChatMessage) => void): () => void

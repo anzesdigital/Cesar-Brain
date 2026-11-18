@@ -1,0 +1,22 @@
+{
+  "provider": "copilot",
+  "userName": "César",
+  "models": {
+    "claude": {
+      "brain": "sonnet",
+      "aliases": {
+        "rapido": "haiku",
+        "normal": "sonnet",
+        "potente": "opus"
+      }
+    },
+    "copilot": {
+      "brain": "claude-sonnet-4.5",
+      "aliases": {
+        "rapido": "claude-haiku-4.5",
+        "normal": "claude-sonnet-4.5",
+        "potente": "claude-opus-4.5"
+      }
+    }
+  }
+}
