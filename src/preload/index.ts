@@ -19,6 +19,7 @@ const api: BrainApi = {
   setApiKey: (key) => ipcRenderer.invoke('apikey:set', key),
   setProvider: (provider) => ipcRenderer.invoke('provider:set', provider),
   checkProvider: () => ipcRenderer.invoke('provider:check'),
+  setSkin: (skin) => ipcRenderer.invoke('skin:set', skin),
   addRepo: () => ipcRenderer.invoke('repos:add'),
   setRepoAccess: (name, write) => ipcRenderer.invoke('repos:access', name, write),
   removeRepo: (name) => ipcRenderer.invoke('repos:remove', name),

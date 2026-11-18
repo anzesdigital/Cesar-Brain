@@ -36,18 +36,23 @@ const BRAIN = [
 
 export const BRAIN_SPRITE: SpriteSpec = { hair: '#f29ac0', shirt: '#6b4fd8', skin: '#f2c9a0' }
 
-function colors(spec: SpriteSpec): Record<string, string> {
+/** Color from a CSS variable on <html> (set by the skin), or the classic one. */
+function skinColor(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function colors(spec: SpriteSpec, isBrain: boolean): Record<string, string> {
   return {
-    H: spec.hair,
+    H: isBrain ? skinColor('--brain-hair', spec.hair) : spec.hair,
     S: spec.skin,
-    T: spec.shirt,
-    K: '#1b1c2b',
+    T: isBrain ? skinColor('--brain-shirt', spec.shirt) : spec.shirt,
+    K: skinColor('--sprite-eye', '#1b1c2b'),
     M: '#b0563f',
-    L: '#c9d3e6',
-    D: '#8a5a3b',
-    d: '#5e3c27',
-    B: '#f29ac0',
-    W: '#d9659a'
+    L: skinColor('--sprite-laptop', '#c9d3e6'),
+    D: skinColor('--sprite-desk', '#8a5a3b'),
+    d: skinColor('--sprite-desk-leg', '#5e3c27'),
+    B: skinColor('--brain-hair', '#f29ac0'),
+    W: skinColor('--brain-fold', '#d9659a')
   }
 }
 
@@ -55,7 +60,7 @@ export function drawSprite(canvas: HTMLCanvasElement, spec: SpriteSpec, isBrain:
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const grid = isBrain ? BRAIN : PERSON
-  const palette = colors(spec)
+  const palette = colors(spec, isBrain)
   ctx.clearRect(0, 0, SPRITE_SIZE, SPRITE_SIZE)
   grid.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {

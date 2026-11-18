@@ -30,9 +30,11 @@ const ZOOM_BAR = 44
 
 function Sprite({ spec, isBrain }: { spec: SpriteSpec; isBrain: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null)
+  // Desk, laptop and the brain's colors come from the skin.
+  const skin = useStore((s) => s.status?.skin)
   useEffect(() => {
     if (ref.current) drawSprite(ref.current, spec, isBrain)
-  }, [spec, isBrain])
+  }, [spec, isBrain, skin])
   return <canvas ref={ref} width={SPRITE_SIZE} height={SPRITE_SIZE} className="sprite" />
 }
 

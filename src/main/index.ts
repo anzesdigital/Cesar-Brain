@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
-import type { AppStatus, IncomingFile, ProviderId, RepoStatus } from '@shared/types'
+import { SKINS, type AppStatus, type IncomingFile, type ProviderId, type RepoStatus, type SkinId } from '@shared/types'
 import { BrainOrchestrator } from './brain/orchestrator'
 import { isInside, PermissionGate } from './brain/permissions'
 import { ClaudeProvider } from './brain/providers/claude'
@@ -123,6 +123,7 @@ function status(): AppStatus {
     hasApiKey: Boolean(apiKey),
     busy: busy(),
     provider: config.provider,
+    skin: config.skin,
     homeDir: home.root,
     workspaceDir: home.workspaceDir,
     agentsDir: home.agentsDir,
@@ -274,6 +275,12 @@ async function main(): Promise<void> {
     await updateReposInFile(home.configFile, (repos) => {
       delete repos[String(name)]
     })
+    await reload()
+  })
+  ipcMain.handle('skin:set', async (_e, skin: SkinId) => {
+    if (!Object.hasOwn(SKINS, skin)) throw new Error(`Aspecto desconocido: ${String(skin)}`)
+    if (skin === config.skin) return
+    await updateConfigFile(home.configFile, { skin })
     await reload()
   })
   ipcMain.handle('provider:set', async (_e, provider: ProviderId) => {

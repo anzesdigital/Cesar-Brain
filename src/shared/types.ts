@@ -57,6 +57,14 @@ export const PROVIDERS: Record<ProviderId, string> = {
   copilot: 'GitHub Copilot'
 }
 
+export type SkinId = 'clasica' | 'ing'
+
+/** Looks of the app, chosen in Ajustes or config.json `skin`. */
+export const SKINS: Record<SkinId, string> = {
+  clasica: 'Clásica',
+  ing: 'ING'
+}
+
 /** Whether the chosen provider can run, and what to do if not. */
 export interface ProviderAuth {
   provider: ProviderId
@@ -79,6 +87,7 @@ export interface AppStatus {
   hasApiKey: boolean
   busy: boolean
   provider: ProviderId
+  skin: SkinId
   homeDir: string
   workspaceDir: string
   agentsDir: string
@@ -140,6 +149,7 @@ export interface BrainApi {
   setApiKey(key: string): Promise<void>
   /** Switches provider (saved in config.json); starts a new conversation. */
   setProvider(provider: ProviderId): Promise<void>
+  setSkin(skin: SkinId): Promise<void>
   /** Checks sign-in for the current provider (may take a few seconds). */
   checkProvider(): Promise<ProviderAuth>
   /** Asks for a folder and adds it as a read-only repo; resolves with its name, or undefined if cancelled. */

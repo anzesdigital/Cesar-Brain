@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { BRAIN_ID, PROVIDERS, type ProviderAuth, type ProviderId } from '@shared/types'
+import { BRAIN_ID, PROVIDERS, SKINS, type AppStatus, type ProviderAuth, type ProviderId, type SkinId } from '@shared/types'
 import { InputBar } from './chat/InputBar'
 import { OutputPanel } from './chat/OutputPanel'
 import { Office } from './office/Office'
+import { applySkin } from './skin'
 import { useStore } from './store'
 import { UsagePanel } from './usage/UsagePanel'
 
@@ -217,6 +218,41 @@ function AgentsSettings() {
   )
 }
 
+function SkinSettings() {
+  const skin = useStore((s) => s.status?.skin)
+  const [error, setError] = useState('')
+
+  const choose = async (id: SkinId): Promise<void> => {
+    setError('')
+    try {
+      await window.brain.setSkin(id)
+    } catch (err) {
+      setError(cleanError(err))
+    }
+  }
+
+  return (
+    <section className="settings-block">
+      <h3>Aspecto</h3>
+      <div className="usage-ranges" role="group" aria-label="Aspecto">
+        {(Object.keys(SKINS) as SkinId[]).map((id) => (
+          <button
+            type="button"
+            key={id}
+            className={`btn-ghost${id === skin ? ' usage-range-on' : ''}`}
+            aria-pressed={id === skin}
+            onClick={() => void choose(id)}
+          >
+            {SKINS[id]}
+          </button>
+        ))}
+      </div>
+      <p className="modal-note">Solo cambia los colores. Se guarda en config.json.</p>
+      {error && <p className="inputbar-error">{error}</p>}
+    </section>
+  )
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const status = useStore((s) => s.status)
   const setStatus = useStore((s) => s.setStatus)
@@ -238,6 +274,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       <div className="modal" role="dialog" aria-labelledby="settings-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="settings-title">Ajustes</h2>
         <ProviderSettings />
+        <SkinSettings />
         {status?.provider === 'claude' && (
           <section className="settings-section">
             <label htmlFor="api-key">Clave de API de Anthropic</label>
@@ -314,13 +351,18 @@ export function App() {
     void api.getAgents().then(s.setAgents)
     void api.getHistory().then(s.setMessages)
     void api.getUsage().then(s.setUsage)
-    void api.getStatus().then((status) => {
+    // The skin goes on <html> before the store update, so sprites repaint with its colors.
+    const onStatus = (status: AppStatus): void => {
+      applySkin(status.skin)
       s.setStatus(status)
+    }
+    void api.getStatus().then((status) => {
+      onStatus(status)
       s.setBusy(status.busy)
     })
     const unsubscribe = [
       api.onAgents(s.setAgents),
-      api.onStatus(s.setStatus),
+      api.onStatus(onStatus),
       api.onReset(s.clearConversation),
       api.onThought(s.addThought),
       api.onDelta(s.setStreamText),

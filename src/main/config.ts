@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
-import type { ProviderId } from '@shared/types'
+import { SKINS, type ProviderId, type SkinId } from '@shared/types'
 import { parseRepos, type Repo } from './repos'
 
 /** Model names for one provider. */
@@ -18,6 +18,8 @@ export interface AppConfig {
   models: Record<ProviderId, ProviderModels>
   /** Local code repositories agents may work in. */
   repos: Repo[]
+  /** Looks of the app. */
+  skin: SkinId
 }
 
 const modelsSchema = z
@@ -37,8 +39,20 @@ const configSchema = z.object({
     })
     .optional(),
   // Checked entry by entry in parseRepos, so one bad repo does not break the file.
-  repos: z.unknown().optional()
+  repos: z.unknown().optional(),
+  // An unknown skin only falls back to the default, see skinOf.
+  skin: z.unknown().optional()
 })
+
+function isSkin(value: unknown): value is SkinId {
+  return typeof value === 'string' && Object.hasOwn(SKINS, value)
+}
+
+/** Problem with the `skin` key, if any. */
+function skinWarning(raw: unknown): string | undefined {
+  if (raw === undefined || isSkin(raw)) return undefined
+  return `config.json: skin "${String(raw)}" no existe (usa ${Object.keys(SKINS).join(' o ')}); se usa la clásica.`
+}
 
 export function defaultConfig(): AppConfig {
   return {
@@ -49,7 +63,8 @@ export function defaultConfig(): AppConfig {
       claude: { brain: 'sonnet', aliases: { rapido: 'haiku', normal: 'sonnet', potente: 'opus' } },
       copilot: { brain: '', aliases: {} }
     },
-    repos: []
+    repos: [],
+    skin: 'clasica'
   }
 }
 
@@ -70,7 +85,8 @@ export function parseConfig(raw: unknown): AppConfig {
     provider: data.provider ?? base.provider,
     userName: data.userName?.trim() ?? '',
     models: { claude: models('claude'), copilot: models('copilot') },
-    repos: parseRepos(data.repos).repos
+    repos: parseRepos(data.repos).repos,
+    skin: isSkin(data.skin) ? data.skin : base.skin
   }
 }
 
@@ -91,7 +107,8 @@ export async function loadConfig(file: string): Promise<ConfigLoad> {
   }
   try {
     const raw = JSON.parse(text) as Record<string, unknown> | null
-    const warnings = parseRepos(raw?.repos).errors
+    const skin = skinWarning(raw?.skin)
+    const warnings = [...parseRepos(raw?.repos).errors, ...(skin ? [skin] : [])]
     return { config: parseConfig(raw), ...(warnings.length ? { warnings } : {}) }
   } catch (err) {
     const reason = err instanceof SyntaxError ? `config.json no es JSON válido (${err.message})` : (err as Error).message

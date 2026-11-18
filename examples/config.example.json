@@ -1,6 +1,7 @@
 {
   "provider": "copilot",
   "userName": "César",
+  "skin": "clasica",
   "models": {
     "claude": {
       "brain": "sonnet",
