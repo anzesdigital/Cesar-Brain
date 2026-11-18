@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+.env
+# personal finance data and source files
+brain/finanzas/
+input/
+*.log
+workspace/inbox/*
+workspace/output/*
+!workspace/inbox/.gitkeep
+!workspace/output/.gitkeep
