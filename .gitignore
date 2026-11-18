@@ -3,12 +3,13 @@ out/
 dist/
 .env
 *.log
-# User data lives outside the repo (%USERPROFILE%\CesarBrain); never commit a local copy.
-workspace/
-agents/
-config.json
-mcp.json
-memory.md
+# User data lives outside the repo (%USERPROFILE%/CesarBrain); never commit a local copy.
+# Rules start with / so they only match at the repo root (brain/agents must be tracked).
+/workspace/
+/agents/
+/config.json
+/mcp.json
+/memory.md
 # Personal finance data from the old version (tag personal-finanzas)
-brain/finanzas/
-input/
+/brain/finanzas/
+/input/
