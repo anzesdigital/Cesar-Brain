@@ -1,6 +1,7 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { ProviderId } from '@shared/types'
+import { parseRepos, type Repo } from './repos'
 
 /** Model names for one provider. */
 export interface ProviderModels {
@@ -15,6 +16,8 @@ export interface AppConfig {
   /** How the brain and agents call the user. */
   userName: string
   models: Record<ProviderId, ProviderModels>
+  /** Local code repositories agents may work in. */
+  repos: Repo[]
 }
 
 const modelsSchema = z
@@ -32,7 +35,9 @@ const configSchema = z.object({
       claude: modelsSchema,
       copilot: modelsSchema
     })
-    .optional()
+    .optional(),
+  // Checked entry by entry in parseRepos, so one bad repo does not break the file.
+  repos: z.unknown().optional()
 })
 
 export function defaultConfig(): AppConfig {
@@ -43,7 +48,8 @@ export function defaultConfig(): AppConfig {
       // Tiers used by agents and delegations: cheapest model that does the job.
       claude: { brain: 'sonnet', aliases: { rapido: 'haiku', normal: 'sonnet', potente: 'opus' } },
       copilot: { brain: '', aliases: {} }
-    }
+    },
+    repos: []
   }
 }
 
@@ -63,13 +69,16 @@ export function parseConfig(raw: unknown): AppConfig {
   return {
     provider: data.provider ?? base.provider,
     userName: data.userName?.trim() ?? '',
-    models: { claude: models('claude'), copilot: models('copilot') }
+    models: { claude: models('claude'), copilot: models('copilot') },
+    repos: parseRepos(data.repos).repos
   }
 }
 
 export interface ConfigLoad {
   config: AppConfig
   error?: string
+  /** Entries that were skipped (e.g. a bad repo). */
+  warnings?: string[]
 }
 
 /** Reads config.json. A missing or broken file falls back to defaults and says why. */
@@ -81,7 +90,9 @@ export async function loadConfig(file: string): Promise<ConfigLoad> {
     return { config: defaultConfig() }
   }
   try {
-    return { config: parseConfig(JSON.parse(text)) }
+    const raw = JSON.parse(text) as Record<string, unknown> | null
+    const warnings = parseRepos(raw?.repos).errors
+    return { config: parseConfig(raw), ...(warnings.length ? { warnings } : {}) }
   } catch (err) {
     const reason = err instanceof SyntaxError ? `config.json no es JSON válido (${err.message})` : (err as Error).message
     return { config: defaultConfig(), error: reason }
@@ -104,6 +115,31 @@ export async function updateConfigFile(file: string, patch: Record<string, unkno
   const tmp = `${file}.tmp`
   await writeFile(tmp, JSON.stringify({ ...current, ...patch }, null, 2) + '\n', 'utf8')
   await rename(tmp, file)
+}
+
+/** Reads config.json as written (unknown keys included); {} when missing or broken. */
+export async function readRawConfig(file: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(await readFile(file, 'utf8')) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+  } catch {
+    // missing or broken
+  }
+  return {}
+}
+
+/** Edits the `repos` object of config.json, keeping everything else. */
+export async function updateReposInFile(
+  file: string,
+  change: (repos: Record<string, { ruta: string; acceso: string }>) => void
+): Promise<void> {
+  const raw = await readRawConfig(file)
+  const repos =
+    raw.repos && typeof raw.repos === 'object' && !Array.isArray(raw.repos)
+      ? { ...(raw.repos as Record<string, { ruta: string; acceso: string }>) }
+      : {}
+  change(repos)
+  await updateConfigFile(file, { repos })
 }
 
 // Claude aliases and tier names Copilot does not understand on their own.

@@ -17,6 +17,8 @@ export interface AgentSpec {
   bubbles?: Record<string, string>
   /** Permission-prompt templates per tool. */
   permissions?: Record<string, string>
+  /** Names of config.json repos it may use; undefined = all of them. */
+  repos?: string[]
 }
 
 export interface AgentRecord {
@@ -151,6 +153,7 @@ export function parseAgentFile(
   const spec: AgentSpec = { description, prompt, tools, mcp, model }
   if (bubbles) spec.bubbles = bubbles
   if (permissions) spec.permissions = permissions
+  if (data.repos !== undefined) spec.repos = stringList(data.repos, 'repos')
 
   return {
     info: { id, name, role, description, sprite, zone },

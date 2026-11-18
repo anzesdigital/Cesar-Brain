@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
-import type { AppStatus, IncomingFile, ProviderId } from '@shared/types'
+import type { AppStatus, IncomingFile, ProviderId, RepoStatus } from '@shared/types'
 import { BrainOrchestrator } from './brain/orchestrator'
 import { isInside, PermissionGate } from './brain/permissions'
 import { ClaudeProvider } from './brain/providers/claude'
@@ -13,9 +13,10 @@ import type { BrainProvider } from './brain/providers/types'
 import { CANONICAL_TOOLS, loadAgents, type AgentRecord } from './brain/registry'
 import { SessionStore } from './brain/sessions'
 import { UsageStore } from './brain/usage'
-import { defaultConfig, loadConfig, updateConfigFile, type AppConfig } from './config'
+import { defaultConfig, loadConfig, updateConfigFile, updateReposInFile, type AppConfig } from './config'
 import { defaultHomeDir, ensureHome, homePaths } from './home'
 import { emptyCatalog, loadMcp, type McpCatalog } from './mcp'
+import { agentReposText, REPO_NAME_RE, reposFor, usesFiles } from './repos'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -36,6 +37,7 @@ let agents: AgentRecord[] = []
 let mcp: McpCatalog = emptyCatalog()
 let config: AppConfig = defaultConfig()
 let problems: string[] = []
+let repoStatus: RepoStatus[] = []
 let apiKey: string | undefined
 
 const providers: Record<ProviderId, BrainProvider> = {
@@ -74,12 +76,41 @@ async function reload(): Promise<void> {
       MCP_SERVERS: mcpList.length ? mcpList.join(', ') : '(ninguno; se añaden en mcp.json)',
       MCP_FILE: home.mcpFile,
       TOOLS: CANONICAL_TOOLS.join(', '),
-      USER: config.userName || 'el usuario'
+      USER: config.userName || 'el usuario',
+      REPOS: config.repos.length ? config.repos.map((r) => r.name).join(', ') : '(ninguno; se añaden en Ajustes)'
     },
     sharedRules
   )
   agents = result.agents
-  problems = [...(loaded.error ? [loaded.error] : []), ...mcp.errors, ...result.errors, ...providerWarnings()]
+
+  // Repos: tell each agent that works with files which ones it may use.
+  const repoNames = new Set(config.repos.map((r) => r.name))
+  const repoProblems: string[] = []
+  for (const agent of agents) {
+    const unknown = (agent.spec.repos ?? []).filter((n) => !repoNames.has(n))
+    if (unknown.length) repoProblems.push(`${agent.info.id}: repos que no existen en config.json: ${unknown.join(', ')}`)
+    if (!usesFiles(agent.spec.tools)) continue
+    const text = agentReposText(reposFor(config.repos, agent.spec.repos))
+    if (text) agent.spec.prompt = `${agent.spec.prompt}\n\n${text}`
+  }
+  repoStatus = await Promise.all(
+    config.repos.map(async (r) => ({
+      name: r.name,
+      path: r.path,
+      write: r.write,
+      exists: await stat(r.path).then((s) => s.isDirectory()).catch(() => false)
+    }))
+  )
+  for (const r of repoStatus) if (!r.exists) repoProblems.push(`repo "${r.name}": no existe la carpeta ${r.path}`)
+
+  problems = [
+    ...(loaded.error ? [loaded.error] : []),
+    ...(loaded.warnings ?? []),
+    ...mcp.errors,
+    ...result.errors,
+    ...repoProblems,
+    ...providerWarnings()
+  ]
   for (const p of problems) console.warn('[config]', p)
   send('agents', agents.map((a) => a.info))
   send('status', status())
@@ -95,7 +126,8 @@ function status(): AppStatus {
     homeDir: home.root,
     workspaceDir: home.workspaceDir,
     agentsDir: home.agentsDir,
-    problems
+    problems,
+    repos: repoStatus
   }
 }
 
@@ -214,6 +246,36 @@ async function main(): Promise<void> {
   ipcMain.handle('usage:get', () => usage.snapshot())
   ipcMain.handle('status:get', () => status())
   ipcMain.handle('provider:check', () => providers[config.provider].auth())
+  ipcMain.handle('repos:add', async () => {
+    const options = { title: 'Elige la carpeta del repositorio', properties: ['openDirectory' as const] }
+    const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    const folder = picked.filePaths[0]
+    if (picked.canceled || !folder) return undefined
+    let added: string | undefined
+    await updateReposInFile(home.configFile, (repos) => {
+      const base = basename(folder).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'repo'
+      let name = base
+      for (let i = 2; repos[name]; i++) name = `${base}-${i}`
+      // New repos start read-only; write access is a deliberate choice.
+      repos[name] = { ruta: folder.replace(/\\/g, '/'), acceso: 'lectura' }
+      added = name
+    })
+    await reload()
+    return added
+  })
+  ipcMain.handle('repos:access', async (_e, name: string, write: boolean) => {
+    if (!REPO_NAME_RE.test(String(name))) return
+    await updateReposInFile(home.configFile, (repos) => {
+      if (repos[name]) repos[name] = { ...repos[name], acceso: write === true ? 'escritura' : 'lectura' }
+    })
+    await reload()
+  })
+  ipcMain.handle('repos:remove', async (_e, name: string) => {
+    await updateReposInFile(home.configFile, (repos) => {
+      delete repos[String(name)]
+    })
+    await reload()
+  })
   ipcMain.handle('provider:set', async (_e, provider: ProviderId) => {
     if (provider !== 'claude' && provider !== 'copilot') throw new Error(`Proveedor desconocido: ${String(provider)}`)
     if (provider === config.provider) return

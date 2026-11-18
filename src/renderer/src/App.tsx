@@ -113,6 +113,78 @@ function ProviderSettings() {
   )
 }
 
+function ReposSettings() {
+  const status = useStore((s) => s.status)
+  const busy = useStore((s) => s.busy)
+  const [error, setError] = useState('')
+  if (!status) return null
+
+  const run = async (work: () => Promise<unknown>): Promise<void> => {
+    setError('')
+    try {
+      await work()
+    } catch (err) {
+      setError(cleanError(err))
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>Repositorios</h3>
+      <p className="modal-note">
+        Carpetas de código en las que pueden trabajar los agentes. En <strong>lectura</strong> solo leen; en{' '}
+        <strong>escritura</strong> también modifican archivos sin preguntar. Los comandos siempre piden permiso. Un agente
+        puede limitarse a algunos con <code>repos: [nombre]</code> en su agent.md.
+      </p>
+      {status.repos.length > 0 ? (
+        <ul className="repo-list">
+          {status.repos.map((repo) => (
+            <li key={repo.name} className={repo.exists ? undefined : 'repo-missing'}>
+              <div className="repo-info">
+                <strong>{repo.name}</strong>
+                <code title={repo.path}>{repo.path}</code>
+                {!repo.exists && <em>No existe en este equipo</em>}
+              </div>
+              <div className="usage-ranges" role="group" aria-label={`Acceso a ${repo.name}`}>
+                {[false, true].map((write) => (
+                  <button
+                    key={String(write)}
+                    type="button"
+                    className={`btn-ghost${repo.write === write ? ' usage-range-on' : ''}`}
+                    aria-pressed={repo.write === write}
+                    disabled={busy}
+                    onClick={() => void run(() => window.brain.setRepoAccess(repo.name, write))}
+                  >
+                    {write ? 'Escritura' : 'Lectura'}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="btn-ghost repo-remove"
+                disabled={busy}
+                aria-label={`Quitar ${repo.name}`}
+                title="Quitar (no borra la carpeta)"
+                onClick={() => void run(() => window.brain.removeRepo(repo.name))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="modal-note">Aún no hay ninguno.</p>
+      )}
+      {error && <p className="inputbar-error">{error}</p>}
+      <div className="modal-actions">
+        <button type="button" className="btn-ghost" disabled={busy} onClick={() => void run(() => window.brain.addRepo())}>
+          Añadir carpeta…
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function AgentsSettings() {
   const status = useStore((s) => s.status)
   if (!status) return null
@@ -194,6 +266,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             </div>
           </section>
         )}
+        <ReposSettings />
         <AgentsSettings />
         <div className="modal-actions">
           <button type="button" className="btn-ghost" onClick={onClose}>

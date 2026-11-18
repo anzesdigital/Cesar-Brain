@@ -829,6 +829,50 @@ button:disabled {
   color: var(--text);
 }
 
+.repo-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.repo-info {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.repo-info code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-info em {
+  color: var(--bad);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.repo-missing strong {
+  color: var(--bad);
+}
+
+.repo-remove {
+  padding: 4px 9px;
+}
+
 .settings-problems {
   margin: 4px 0 0;
   padding-left: 1.4em;

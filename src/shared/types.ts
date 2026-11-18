@@ -65,6 +65,16 @@ export interface ProviderAuth {
   detail: string
 }
 
+/** A code repository agents may work in, as shown in Ajustes. */
+export interface RepoStatus {
+  name: string
+  path: string
+  /** Read and write (true) or read only (false). */
+  write: boolean
+  /** The folder exists on this computer. */
+  exists: boolean
+}
+
 export interface AppStatus {
   hasApiKey: boolean
   busy: boolean
@@ -74,6 +84,7 @@ export interface AppStatus {
   agentsDir: string
   /** Problems found while reading config.json, mcp.json or agent files. */
   problems: string[]
+  repos: RepoStatus[]
 }
 
 export interface TokenCount {
@@ -131,6 +142,10 @@ export interface BrainApi {
   setProvider(provider: ProviderId): Promise<void>
   /** Checks sign-in for the current provider (may take a few seconds). */
   checkProvider(): Promise<ProviderAuth>
+  /** Asks for a folder and adds it as a read-only repo; resolves with its name, or undefined if cancelled. */
+  addRepo(): Promise<string | undefined>
+  setRepoAccess(name: string, write: boolean): Promise<void>
+  removeRepo(name: string): Promise<void>
   respondPermission(id: string, allow: boolean): Promise<void>
   openPath(path: string): Promise<void>
   pathForFile(file: File): string

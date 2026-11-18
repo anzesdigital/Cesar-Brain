@@ -4,6 +4,7 @@ import matter from 'gray-matter'
 import { BRAIN_ID, type AgentState, type ChatMessage, type ThoughtEvent, type UsageSnapshot } from '@shared/types'
 import type { AppConfig } from '../config'
 import type { McpCatalog } from '../mcp'
+import { brainReposText } from '../repos'
 import { fillPlaceholders, rosterText, type AgentRecord } from './registry'
 import { decide, type PermissionGate } from './permissions'
 import type { BrainProvider, RunResult, RunSink } from './providers/types'
@@ -46,13 +47,14 @@ async function readOptional(file: string): Promise<string> {
 /** Builds the brain's system prompt from brain.md. */
 export function brainPrompt(
   template: string,
-  values: { roster: string; memory: string; user: string; delegation: string }
+  values: { roster: string; memory: string; user: string; delegation: string; repos?: string }
 ): string {
   return fillPlaceholders(matter(template).content, {
     ROSTER: values.roster,
     MEMORY: values.memory || '(vacía)',
     USER: values.user || 'el usuario',
-    DELEGATION: values.delegation
+    DELEGATION: values.delegation,
+    REPOS: values.repos ?? '(Ninguno configurado.)'
   }).trim()
 }
 
@@ -109,7 +111,8 @@ export class BrainOrchestrator {
             roster: rosterText(agents),
             memory,
             user: appConfig.userName,
-            delegation: provider.delegationText(appConfig)
+            delegation: provider.delegationText(appConfig),
+            repos: brainReposText(appConfig.repos, Object.fromEntries(agents.map((a) => [a.info.id, a.spec.repos])))
           }),
           agents,
           mcp: this.config.getMcp(),
@@ -199,13 +202,20 @@ export class BrainOrchestrator {
           .catch((err) => console.warn('[uso]', err))
       },
       authorize: async (agentId, tool, input, signal) => {
+        const repoLimit = agentId === BRAIN_ID ? undefined : this.agentOf(agentId)?.spec.repos
         const decision = decide(tool, input, {
           workspaceDir: this.config.workspaceDir,
           readableDirs: this.config.readableDirs,
           trustedServers: this.config.getMcp().trusted,
-          trustedTools: this.config.getMcp().trustedTools
+          trustedTools: this.config.getMcp().trustedTools,
+          repos: this.config.getConfig().repos,
+          allowedRepos: repoLimit ? new Set(repoLimit) : undefined
         })
         if (decision === 'allow') return true
+        if (typeof decision === 'object') {
+          this.think(agentId, 'working', truncate(decision.deny))
+          return decision.deny
+        }
         const custom = templateFor(this.agentOf(agentId)?.spec.permissions, tool)
         const summary = (custom && render(custom, input, '\n')) || permissionSummary(tool, input)
         this.think(agentId, 'asking', truncate(`¿Puedo? ${summary}`))

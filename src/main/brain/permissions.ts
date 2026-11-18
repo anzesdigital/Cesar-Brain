@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { resolve, sep } from 'node:path'
 import type { PermissionRequest } from '@shared/types'
 import { mcpServerOf } from '../mcp'
+import type { Repo } from '../repos'
 
-export type Decision = 'allow' | 'ask'
+/** 'allow', 'ask' the user, or refuse with a reason the agent is told. */
+export type Decision = 'allow' | 'ask' | { deny: string }
 
 const DELEGATION = new Set(['Agent', 'Task'])
 const WEB = new Set(['WebSearch', 'WebFetch'])
@@ -28,12 +30,26 @@ export interface PolicyContext {
   trustedServers?: ReadonlySet<string>
   /** Single MCP tools (`mcp__srv__tool`) that run without asking. */
   trustedTools?: ReadonlySet<string>
+  /** Every configured code repository. */
+  repos?: readonly Repo[]
+  /** Names of the repos this caller may use (undefined = all). */
+  allowedRepos?: ReadonlySet<string>
+}
+
+/** The configured repo a path is in (the innermost one if they nest). */
+function repoOf(target: string, repos: readonly Repo[]): Repo | undefined {
+  return repos
+    .filter((r) => isInside(target, r.path))
+    .sort((a, b) => b.path.length - a.path.length)[0]
 }
 
 /**
  * Policy, on canonical tool names: delegation and web are free; file reads are
  * free inside the workspace and readable folders, file writes only inside the
- * workspace; tools of trusted MCP servers are free; everything else asks.
+ * workspace; tools of trusted MCP servers are free.
+ * Code repos: reading is free and writing is free only in "escritura" repos;
+ * writing a read-only repo or touching a repo the agent was not given is
+ * refused. Everything else (commands included) asks.
  */
 export function decide(toolName: string, input: Record<string, unknown>, ctx: PolicyContext): Decision {
   if (DELEGATION.has(toolName) || WEB.has(toolName)) return 'allow'
@@ -47,6 +63,14 @@ export function decide(toolName: string, input: Record<string, unknown>, ctx: Po
     }
     const target = resolve(ctx.workspaceDir, raw)
     if (isInside(target, ctx.workspaceDir)) return 'allow'
+    const repo = repoOf(target, ctx.repos ?? [])
+    if (repo) {
+      if (ctx.allowedRepos && !ctx.allowedRepos.has(repo.name)) {
+        return { deny: `No tienes acceso al repositorio "${repo.name}". Avisa al Cerebro de que este encargo necesita ese repo.` }
+      }
+      if (FILE_READ.has(toolName) || repo.write) return 'allow'
+      return { deny: `El repositorio "${repo.name}" es de solo lectura: no se puede modificar.` }
+    }
     if (FILE_READ.has(toolName) && (ctx.readableDirs ?? []).some((d) => isInside(target, d))) return 'allow'
     return 'ask'
   }

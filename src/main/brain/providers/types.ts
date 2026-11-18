@@ -21,6 +21,11 @@ export interface RunRequest {
  * What a provider reports while it runs. Tool names are canonical
  * (Read, Write, Bash, mcp__srv__tool…) whatever the provider calls them.
  */
+/** Message for the agent when a tool call is not allowed. */
+export function denialMessage(result: boolean | string): string {
+  return typeof result === 'string' ? result : 'El usuario no autorizó esta acción.'
+}
+
 export interface RunSink {
   sessionId(id: string): void
   /** Brain's answer so far (whole text, not a chunk). */
@@ -31,8 +36,11 @@ export interface RunSink {
   delegationStart(callId: string, agentId: string, task: string): void
   delegationEnd(callId: string, ok: boolean): void
   limits(limits: UsageLimit[], available: boolean, plan?: string): void
-  /** Applies the permission policy and asks the user when needed. */
-  authorize(agentId: string, tool: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<boolean>
+  /**
+   * Applies the permission policy and asks the user when needed.
+   * true = go ahead; false = the user said no; a string = refused, with the reason for the agent.
+   */
+  authorize(agentId: string, tool: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<boolean | string>
 }
 
 export interface RunResult {

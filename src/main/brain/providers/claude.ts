@@ -15,7 +15,7 @@ import { delegationGuide, tierModels } from './guide'
 import type { McpServer } from '../../mcp'
 import type { AgentRecord } from '../registry'
 import { limitsFromPlan, RunMeter, type ApiUsage, type PlanUsage } from '../usage'
-import type { BrainProvider, RunRequest, RunResult, RunSink } from './types'
+import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
 
 const DELEGATION_TOOLS = new Set(['Agent', 'Task'])
 /** Values the Agent tool's `model` field accepts. */
@@ -120,15 +120,17 @@ class ClaudeRun {
       allowedTools: ['Agent', 'WebSearch', 'WebFetch', ...trusted],
       // Do not inherit the user's Claude Code settings, hooks or plugins.
       settingSources: [],
+      // Code repos from config.json; the permission policy decides what each agent may do there.
+      additionalDirectories: req.config.repos.map((r) => r.path),
       includePartialMessages: true,
       forwardSubagentText: true,
       env,
       canUseTool: async (toolName, input, ctx) => {
         const agentId = this.toolOwners.get(ctx.toolUseID) ?? BRAIN_ID
-        const allowed = await this.sink.authorize(agentId, toolName, input, ctx.signal)
-        return allowed
+        const result = await this.sink.authorize(agentId, toolName, input, ctx.signal)
+        return result === true
           ? { behavior: 'allow', updatedInput: input }
-          : { behavior: 'deny', message: 'El usuario no autorizó esta acción.' }
+          : { behavior: 'deny', message: denialMessage(result) }
       }
     }
     const model = req.config.models.claude.brain

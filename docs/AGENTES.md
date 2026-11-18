@@ -32,6 +32,7 @@ Eres Teo, traductor de un equipo que ayuda a {{USER}}. El Cerebro te pasa encarg
 | `zona` | no | Sala de la oficina donde se sienta (Básicos, Desarrollo, Pruebas, Negocio, Decisiones, Dirección… o cualquier otra; una zona nueva crea una sala). Sin zona va a «General». Mayúsculas y tildes no importan. |
 | `tools` | no | Herramientas permitidas. Sin el campo, todas. |
 | `mcp` | no | Servidores de `mcp.json` que usa. Puede usar todas sus herramientas. |
+| `repos` | no | Repositorios de código (de `config.json`) que puede usar, p. ej. `[api, web]`. Sin el campo, todos; `[]`, ninguno. |
 | `model` | no | Nivel según el uso habitual del agente: `rapido` (resumir, extraer, consultar, anotar), `normal` (investigar, redactar, documentos largos) o `potente` (solo programación o análisis complejos). Cada nivel se traduce al modelo real en `config.json` (`models.<proveedor>.aliases`). También acepta un alias o id de modelo concreto. |
 | `sprite` | no | Colores `#rrggbb` de pelo, camiseta y piel. |
 
@@ -88,6 +89,24 @@ Si una herramienta no tiene texto propio, se usa el genérico. Las burbujas se r
 
 - Leer y escribir dentro de `workspace/` no pide permiso. Leer la carpeta de agentes tampoco.
 - Escribir fuera de `workspace/` (incluida la carpeta de agentes), ejecutar comandos y usar herramientas MCP pide permiso en pantalla, salvo lo marcado como `"trusted"` en `mcp.json`.
+
+## Repositorios de código
+
+Carpetas de código locales en las que trabajan los agentes. Se añaden en **Ajustes → Repositorios** (o a mano en `config.json`):
+
+```json
+"repos": {
+  "api": { "ruta": "C:/proyectos/api", "acceso": "escritura" },
+  "web": { "ruta": "C:/proyectos/web", "acceso": "lectura" }
+}
+```
+
+- **lectura**: los agentes leen y buscan sin preguntar; modificar se rechaza.
+- **escritura**: también crean y editan archivos sin preguntar.
+- Un agente con `repos: [api]` solo puede tocar `api`; cualquier otro repo se le rechaza.
+- Los comandos (git, tests, builds…) siempre piden permiso.
+- Los agentes con herramientas de archivos reciben en su prompt la lista de sus repos con su ruta y acceso. El Cerebro recibe la lista completa para repartir el trabajo.
+- Un repo cuya carpeta no existe en ese equipo aparece en rojo en Ajustes, sin romper nada (útil si `config.json` viaja entre ordenadores).
 
 ## Servidores MCP (`mcp.json`)
 

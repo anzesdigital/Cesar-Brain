@@ -13,10 +13,9 @@ import type { McpServer } from '../../mcp'
 import type { AgentRecord } from '../registry'
 import { addCount, emptyCount } from '../usage'
 import { fromCopilotTool, permissionToCanonical, toCopilotTools, type CopilotPermission } from './toolmap'
-import type { BrainProvider, RunRequest, RunResult, RunSink } from './types'
+import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
 
 const QUOTA_TIMEOUT_MS = 5000
-const DENIED = 'El usuario no autorizó esta acción.'
 
 export function toCopilotMcp(server: McpServer): MCPServerConfig {
   if (server.type !== 'stdio') return { type: server.type, url: server.url, headers: server.headers, tools: ['*'] }
@@ -278,13 +277,15 @@ export class CopilotProvider implements BrainProvider {
       const onRequest: PermissionHandler = async (request) => {
         const r = request as unknown as CopilotPermission
         const { tool, input } = permissionToCanonical(r)
-        const allowed = await sink.authorize(translator.ownerOf(r.toolCallId), tool, input, req.signal)
-        return allowed ? { kind: 'approve-once' } : { kind: 'reject', feedback: DENIED }
+        const result = await sink.authorize(translator.ownerOf(r.toolCallId), tool, input, req.signal)
+        return result === true ? { kind: 'approve-once' } : { kind: 'reject', feedback: denialMessage(result) }
       }
       const options: CreateSessionOptions = {
         workingDirectory: req.workspaceDir,
         // Do not pick up the user's own Copilot instructions, agents or MCP config.
         enableConfigDiscovery: false,
+        // Code repos from config.json; the permission policy decides what each agent may do there.
+        filesystem: { additionalDirectories: req.config.repos.map((r) => r.path) },
         systemMessage: { mode: 'append', content: req.systemPrompt },
         agents: {
           definitions: req.agents.map((a) => toCopilotAgent(a, resolveModel(req.config, 'copilot', a.spec.model))),
