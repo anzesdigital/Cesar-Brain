@@ -4,7 +4,7 @@ Cerebro multi-agente de escritorio con oficina pixel art. Un Cerebro coordinador
 
 - **Los agentes no son código.** Cada agente es un `agent.md` en tu carpeta de usuario. Añadir uno = soltar una carpeta; entra a funcionar al momento. Ver [docs/AGENTES.md](docs/AGENTES.md).
 - **Dos proveedores:** Claude (Claude Agent SDK) o GitHub Copilot Business (Copilot SDK). Se elige en Ajustes o en `config.json`.
-- **Aspecto:** skin clásica (pixel, oscura) o ING (corporativa, oscura en índigo y naranja). Se elige en Ajustes → Aspecto o con `"skin": "clasica" | "ing"` en `config.json`.
+- **Aspecto:** skin clásica (pixel, oscura) o ING (mismo pixel art, en índigo y naranja pastel). Se elige en Ajustes → Aspecto o con `"skin": "clasica" | "ing"` en `config.json`.
 
 ## Qué hay en el repo y qué no
 

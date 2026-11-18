@@ -1398,229 +1398,63 @@ button:disabled {
 }
 
 /* ---------- Skin ING ----------
- * Corporate look, dark: deep indigo panels with ING orange. Only colors and finish change;
- * the office, rooms and sprites stay the same. No logo or brand font (trademarks).
+ * Same pixel-art office as the classic skin (thick borders, hard shadows, mono font);
+ * only the palette changes: ING indigo and orange, in pastel tones.
+ * No logo or brand font (trademarks).
  */
 
 :root[data-skin='ing'] {
-  --bg: #0b0b2b;
-  --panel: #12123a;
-  --panel-2: #1a1a4a;
-  --line: #2c2c66;
-  --text: #ececf6;
-  --muted: #a6a6cc;
-  --accent: #ff6200;
-  --accent-2: #ff8a3d;
-  --ok: #4cc27a;
-  --warn: #ffb347;
-  --bad: #ff5c5c;
-  --paper: #1c1c50;
-  --ink: #000066;
-  /* Titles and text on orange. */
-  --heading: #ffffff;
-  --on-accent: #000033;
-  --floor-a: #0d0d30;
-  --floor-b: #0a0a28;
-  --room-floor-a: #16164a;
-  --room-floor-b: #131342;
-  --bubble-ask: #3d2410;
-  --bubble-done: #12341f;
-  --bubble-error: #3d1518;
-  --link-color: #8fb8ff;
-  --backdrop: rgba(0, 0, 10, 0.7);
-  --font-ui: 'Segoe UI', Arial, Helvetica, sans-serif;
-  --sprite-desk: #3b3b78;
-  --sprite-desk-leg: #26265a;
-  --sprite-laptop: #ff6200;
-  --sprite-eye: #05051f;
-  --brain-hair: #ff6200;
-  --brain-fold: #d24f00;
-  --brain-shirt: #3a3ad0;
-  --soft-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-  --radius: 8px;
+  --bg: #15153a;
+  --panel: #1d1d4a;
+  --panel-2: #26265c;
+  --line: #3f3f80;
+  --text: #ecebf7;
+  --muted: #a6a6d0;
+  /* ING orange, softened. */
+  --accent: #ff9e5e;
+  /* ING indigo, lifted so it reads on the dark panels. */
+  --accent-2: #5656c8;
+  --ok: #7fd6a4;
+  --warn: #ffc98a;
+  --bad: #ff8a8a;
+  --paper: #fff7f0;
+  --ink: #0e0e30;
+  --floor-a: #19194a;
+  --floor-b: #161642;
+  --room-floor-a: #232360;
+  --room-floor-b: #1f1f57;
+  --bubble-ask: #ffe2c7;
+  --bubble-done: #d8f3e3;
+  --bubble-error: #ffdcdc;
+  --link-color: #9fd9ff;
+  --backdrop: rgba(8, 8, 30, 0.72);
+  --sprite-desk: #6b6bb0;
+  --sprite-desk-leg: #47478a;
+  --sprite-laptop: #ffd2b0;
+  --sprite-eye: #0e0e30;
+  --brain-hair: #ff9e5e;
+  --brain-fold: #ff6200;
+  --brain-shirt: #5656c8;
 }
 
-/* Thin lines and soft shadows instead of thick pixel borders. */
-:root[data-skin='ing'] :is(.btn-primary, .btn-ghost, .btn-stop) {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: none;
+/* Room labels keep a hint of their zone color, pulled toward ING indigo, with an orange line. */
+:root[data-skin='ing'] .room-label {
+  background: color-mix(in srgb, var(--room) 30%, #3a3aa8);
+  border-bottom-color: var(--accent);
 }
 
-:root[data-skin='ing'] .btn-primary {
+:root[data-skin='ing'] .room-label span {
   background: var(--accent);
-  border-color: var(--accent);
-  /* Dark text on orange reads well (white on this orange is below 4.5:1). */
-  color: var(--on-accent);
-}
-
-:root[data-skin='ing'] .btn-primary:not(:disabled):hover {
-  background: #ff7a29;
-}
-
-:root[data-skin='ing'] .btn-ghost {
-  background: var(--panel);
-  color: var(--heading);
-}
-
-:root[data-skin='ing'] .btn-ghost:not(:disabled):hover {
-  border-color: var(--accent);
-}
-
-:root[data-skin='ing'] .btn-stop {
-  background: var(--bad);
-  border-color: var(--bad);
-  color: var(--on-accent);
-}
-
-:root[data-skin='ing'] :is(.btn-primary, .btn-ghost, .btn-stop):not(:disabled):active {
-  transform: translateY(1px);
-}
-
-:root[data-skin='ing'] .usage-ranges .usage-range-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
-:root[data-skin='ing'] .room {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background:
-    linear-gradient(color-mix(in srgb, var(--room) 6%, transparent), color-mix(in srgb, var(--room) 6%, transparent)),
-    repeating-conic-gradient(var(--room-floor-a) 0% 25%, var(--room-floor-b) 0% 50%) 0 0 / 24px 24px;
-  box-shadow: var(--soft-shadow);
+  color: var(--ink);
 }
 
 :root[data-skin='ing'] .room-active {
   box-shadow:
     0 0 0 2px var(--accent),
-    var(--soft-shadow);
+    var(--px) var(--px) 0 rgba(0, 0, 0, 0.4);
 }
 
-:root[data-skin='ing'] .room-label {
-  background: #1f1f7a;
-  color: #ffffff;
-  border-bottom: 3px solid var(--accent);
-  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
-  letter-spacing: 0.06em;
-}
-
-:root[data-skin='ing'] .room-label span {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-radius: 999px;
-}
-
-:root[data-skin='ing'] .nameplate {
-  background: var(--panel);
-  color: var(--heading);
-  border-color: var(--line);
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-:root[data-skin='ing'] .person-selected .nameplate {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
-:root[data-skin='ing'] .person-body {
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.4));
-}
-
-:root[data-skin='ing'] .person-error .person-body {
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.4)) grayscale(0.7);
-}
-
-:root[data-skin='ing'] .bubble {
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--soft-shadow);
-}
-
-:root[data-skin='ing'] .bubble-dot {
-  border: 1px solid var(--line);
-  border-radius: 50%;
-}
-
-:root[data-skin='ing'] .bubble-asking {
-  border-color: var(--accent);
-}
-
-:root[data-skin='ing'] :is(.zoom-controls, .journal, .modal) {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--soft-shadow);
-}
-
-:root[data-skin='ing'] .zoom-controls {
-  overflow: hidden;
-}
-
-:root[data-skin='ing'] .zoom-controls button {
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  color: var(--heading);
-}
-
-:root[data-skin='ing'] .zoom-controls button:hover {
-  background: var(--bg);
-}
-
-:root[data-skin='ing'] .output {
-  border-left: 1px solid var(--line);
-}
-
-/* Header: white with the orange ING line underneath. */
+/* Header with the orange ING line underneath. */
 :root[data-skin='ing'] .output-header {
-  background: var(--panel);
-  border-bottom: 3px solid var(--accent);
-}
-
-:root[data-skin='ing'] .output-header h1,
-:root[data-skin='ing'] .modal h2,
-:root[data-skin='ing'] .settings-block h3,
-:root[data-skin='ing'] .settings-section h3 {
-  color: var(--heading);
-}
-
-:root[data-skin='ing'] .inputbar {
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-}
-
-:root[data-skin='ing'] :is(.inputbar textarea, .modal input, .modal-summary) {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-}
-
-:root[data-skin='ing'] .inputbar textarea:focus {
-  border-color: var(--accent);
-}
-
-:root[data-skin='ing'] .msg {
-  border-radius: var(--radius);
-}
-
-:root[data-skin='ing'] .msg-user {
-  background: #3d2410;
-  border-color: #7a3d14;
-}
-
-:root[data-skin='ing'] .msg-brain {
-  background: var(--panel);
-  border-color: var(--line);
-}
-
-:root[data-skin='ing'] .viewtabs button[aria-selected='true'] {
-  color: var(--heading);
-  box-shadow: inset 0 -3px 0 var(--accent);
-}
-
-:root[data-skin='ing'] .viewtabs button {
-  border-right: 1px solid var(--line);
+  border-bottom-color: var(--accent);
 }
