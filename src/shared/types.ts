@@ -15,6 +15,8 @@ export interface AgentInfo {
   role: string
   description: string
   sprite: SpriteSpec
+  /** Room of the office the agent sits in (agent.md `zona`). */
+  zone: string
 }
 
 export interface ThoughtEvent {

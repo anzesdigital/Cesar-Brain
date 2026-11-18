@@ -205,9 +205,35 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+type View = 'office' | 'chat'
+
+/** Office/chat switch for narrow windows; marks unseen answers. */
+function ViewTabs({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+  const count = useStore((s) => s.messages.length)
+  const busy = useStore((s) => s.busy)
+  const [seen, setSeen] = useState(count)
+  useEffect(() => {
+    if (view === 'chat') setSeen(count)
+  }, [view, count])
+  const unread = view !== 'chat' && count > seen
+
+  return (
+    <nav className="viewtabs" role="tablist" aria-label="Vista">
+      <button type="button" role="tab" aria-selected={view === 'office'} onClick={() => onChange('office')}>
+        Oficina{busy && view !== 'office' ? ' …' : ''}
+      </button>
+      <button type="button" role="tab" aria-selected={view === 'chat'} onClick={() => onChange('chat')}>
+        Chat
+        {unread && <span className="viewtabs-dot" aria-label="respuesta nueva" />}
+      </button>
+    </nav>
+  )
+}
+
 export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [usageOpen, setUsageOpen] = useState(false)
+  const [view, setView] = useState<View>('office')
 
   useEffect(() => {
     const s = useStore.getState()
@@ -234,12 +260,15 @@ export function App() {
   }, [])
 
   return (
-    <div className="app">
+    <div className="app" data-view={view}>
+      <ViewTabs view={view} onChange={setView} />
       <main className="stage">
         <Office />
-        <InputBar />
       </main>
       <OutputPanel onSettings={() => setSettingsOpen(true)} onUsage={() => setUsageOpen(true)} />
+      <div className="input-area">
+        <InputBar />
+      </div>
       <PermissionModal />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {usageOpen && <UsagePanel onClose={() => setUsageOpen(false)} />}

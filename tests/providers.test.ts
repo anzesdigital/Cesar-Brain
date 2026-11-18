@@ -16,7 +16,7 @@ import { mcpServerOf, parseMcp } from '../src/main/mcp'
 
 function agent(id: string, tools?: string[], mcp: string[] = []): AgentRecord {
   return {
-    info: { id, name: id.toUpperCase(), role: '', description: `desc ${id}`, sprite: { hair: '#000000', shirt: '#000000', skin: '#000000' } },
+    info: { id, name: id.toUpperCase(), role: '', description: `desc ${id}`, sprite: { hair: '#000000', shirt: '#000000', skin: '#000000' }, zone: 'General' },
     spec: { description: `desc ${id}`, prompt: `Eres ${id}.`, tools, mcp },
     builtin: false
   }

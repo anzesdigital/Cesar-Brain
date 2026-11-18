@@ -136,8 +136,8 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 900,
-    minHeight: 600,
+    minWidth: 360,
+    minHeight: 480,
     backgroundColor: '#1b1c2b',
     title: 'Cesar Brain',
     autoHideMenuBar: true,

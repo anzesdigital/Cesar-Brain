@@ -46,6 +46,7 @@ Una de estas:
 
 - Escribe o suelta archivos; el Cerebro delega.
 - «Crea un agente que…» → lo hace el configurador.
+- Oficina: cada agente se sienta en la sala de su `zona`. Zoom con los botones o Ctrl + rueda (pellizco en táctil), arrastra el suelo para moverte, doble clic para ver todo. En ventanas estrechas, pestañas Oficina / Chat.
 - Ajustes muestra el proveedor, la sesión, las carpetas y cualquier `agent.md` o `mcp.json` con errores.
 
 ## Desarrollo

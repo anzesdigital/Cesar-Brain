@@ -2,6 +2,7 @@
 id: documentos
 name: Dante
 role: Documentos
+zona: Básicos
 description: Úsalo para trabajar con archivos que {{USER}} adjunta o que están en el workspace. Lee PDFs, imágenes, texto, CSV y código; resume, extrae datos, compara documentos y escribe archivos nuevos con el resultado.
 tools: [Read, Write, Glob, Grep]
 model: rapido

@@ -54,15 +54,35 @@ button:disabled {
 
 .app {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 34%);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'stage output'
+    'input output';
   height: 100%;
 }
 
 .stage {
+  grid-area: stage;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.app > .output {
+  grid-area: output;
+}
+
+.input-area {
+  grid-area: input;
+  min-width: 0;
+}
+
+/* Office / chat switch, only on narrow screens. */
+.viewtabs {
+  grid-area: tabs;
+  display: none;
 }
 
 /* ---------- Buttons ---------- */
@@ -106,30 +126,103 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background:
-    repeating-conic-gradient(#2a2d47 0% 25%, #262940 0% 50%) 0 0 / 64px 64px;
+  background: repeating-conic-gradient(#202238 0% 25%, #1d1f33 0% 50%) 0 0 / 32px 32px;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
 }
 
-.office-wall {
+.office:active {
+  cursor: grabbing;
+}
+
+/* The world is laid out at 1:1 and moved/zoomed as a whole. */
+.office-world {
   position: absolute;
-  inset: 0 0 auto 0;
-  height: 18%;
-  background: linear-gradient(#34385a 0 86%, #1f2136 86% 100%);
-  border-bottom: var(--px) solid #15162a;
+  top: 0;
+  left: 0;
+  /* Rooms wrap to the office width (up to 760px), so a narrow window stacks them. */
+  width: fit-content;
+  max-width: 760px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 20px;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.room {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 190px;
+  border: 3px solid var(--ink);
+  background:
+    linear-gradient(color-mix(in srgb, var(--room) 14%, transparent), color-mix(in srgb, var(--room) 14%, transparent)),
+    repeating-conic-gradient(#2a2d47 0% 25%, #262940 0% 50%) 0 0 / 24px 24px;
+  box-shadow: var(--px) var(--px) 0 rgba(0, 0, 0, 0.4);
+  transition: box-shadow 200ms ease-out;
+}
+
+/* The brain's room sits alone on the first row. */
+.room-break {
+  flex-basis: 100%;
+  height: 0;
+}
+
+.room-active {
+  box-shadow:
+    0 0 0 2px var(--room),
+    var(--px) var(--px) 0 rgba(0, 0, 0, 0.4);
+}
+
+.room-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--room) 70%, var(--ink));
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 3px solid var(--ink);
+}
+
+.room-label span {
+  min-width: 18px;
+  padding: 0 4px;
+  background: var(--ink);
+  color: var(--muted);
+  text-align: center;
+}
+
+.room-floor {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 88px);
+  justify-content: center;
+  gap: 8px 6px;
+  /* room above each person for the bubble */
+  padding: 30px 10px 10px;
 }
 
 .office-links {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  left: 0;
   pointer-events: none;
+  z-index: 1;
+  overflow: visible;
 }
 
 .link {
   stroke: var(--accent);
-  stroke-width: 3;
-  stroke-dasharray: 6 8;
+  stroke-width: 2;
+  stroke-dasharray: 5 6;
   fill: none;
   animation: dash 700ms linear infinite;
 }
@@ -148,37 +241,43 @@ button:disabled {
 
 @keyframes dash {
   to {
-    stroke-dashoffset: -14;
+    stroke-dashoffset: -11;
   }
 }
 
 .person {
-  position: absolute;
-  transform: translate(-50%, -50%);
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 4px;
+  gap: 3px;
+  width: 88px;
+  padding: 2px;
   background: none;
   border: 0;
+  cursor: pointer;
+}
+
+.person:not(.person-idle) {
+  z-index: 3;
 }
 
 .person-body {
   display: block;
-  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.3));
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3));
 }
 
 .sprite {
   display: block;
-  width: 96px;
-  height: 96px;
+  width: 32px;
+  height: 32px;
   image-rendering: pixelated;
 }
 
 .person-brain .sprite {
-  width: 128px;
-  height: 128px;
+  width: 40px;
+  height: 40px;
 }
 
 .person-idle .person-body {
@@ -202,72 +301,117 @@ button:disabled {
 }
 
 .person-error .person-body {
-  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.3)) grayscale(0.7);
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3)) grayscale(0.7);
 }
 
 @keyframes breathe {
   50% {
-    transform: translateY(-2px);
+    transform: translateY(-1px);
   }
 }
 
 @keyframes typing {
   50% {
-    transform: translateY(2px);
+    transform: translateY(1px);
   }
 }
 
 @keyframes wobble {
   50% {
-    transform: rotate(-4deg);
+    transform: rotate(-5deg);
   }
 }
 
 @keyframes hop {
   50% {
-    transform: translateY(-14px);
+    transform: translateY(-6px);
   }
 }
 
 .nameplate {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 3px 8px;
+  max-width: 100%;
+  padding: 1px 5px;
   background: var(--ink);
-  border: 2px solid var(--line);
-  line-height: 1.2;
-}
-
-.nameplate em {
-  font-style: normal;
-  font-size: 11px;
-  color: var(--muted);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .person-selected .nameplate {
   border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- Zoom ---------- */
+
+.zoom-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 4;
+  display: flex;
+  border: 2px solid var(--ink);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+
+.zoom-controls button {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 8px;
+  background: var(--panel-2);
+  border: 0;
+  border-left: 2px solid var(--ink);
+  font-size: 13px;
+}
+
+.zoom-controls button:first-child {
+  border-left: 0;
+}
+
+.zoom-controls button:hover {
+  background: var(--line);
+}
+
+.zoom-controls .zoom-value {
+  min-width: 58px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ---------- Thought bubble ---------- */
 
+/* A point above the head; scaled against the zoom so text stays readable. */
+.bubble-anchor {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 6px);
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  scale: max(1, calc(1 / var(--zoom, 1)));
+  z-index: 5;
+}
+
 .bubble {
   position: absolute;
-  bottom: calc(100% + 26px);
-  left: 50%;
+  bottom: 14px;
+  left: 0;
   transform: translateX(-50%);
   width: max-content;
-  max-width: 230px;
-  padding: 8px 10px;
+  max-width: 150px;
+  padding: 4px 7px;
   background: var(--paper);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.3;
   text-align: left;
-  border: 3px solid var(--ink);
-  box-shadow: var(--px) var(--px) 0 rgba(0, 0, 0, 0.35);
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.35);
   animation: pop 160ms ease-out;
-  z-index: 2;
 }
 
 .bubble-asking {
@@ -284,39 +428,41 @@ button:disabled {
 
 .bubble-dot {
   position: absolute;
-  background: var(--paper);
-  border: 3px solid var(--ink);
+  background: inherit;
+  border: 2px solid var(--ink);
 }
 
 .bubble-dot-1 {
-  width: 12px;
-  height: 12px;
-  left: calc(50% - 14px);
-  bottom: -16px;
+  width: 8px;
+  height: 8px;
+  left: calc(50% - 8px);
+  bottom: -10px;
 }
 
 .bubble-dot-2 {
-  width: 7px;
-  height: 7px;
-  left: calc(50% - 2px);
-  bottom: -25px;
+  width: 5px;
+  height: 5px;
+  left: calc(50% - 1px);
+  bottom: -16px;
 }
 
 @keyframes pop {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(6px) scale(0.92);
+    transform: translateX(-50%) translateY(4px) scale(0.92);
   }
 }
 
 .office-empty {
   position: absolute;
   left: 50%;
-  bottom: 12%;
+  bottom: 56px;
+  z-index: 4;
   transform: translateX(-50%);
-  max-width: 420px;
+  width: min(420px, calc(100% - 32px));
   text-align: center;
   color: var(--muted);
+  cursor: default;
 }
 
 /* ---------- Journal ---------- */
@@ -325,14 +471,22 @@ button:disabled {
   position: absolute;
   top: 12px;
   left: 12px;
-  width: 300px;
+  width: min(300px, calc(100% - 24px));
+  cursor: default;
+  user-select: text;
   max-height: calc(100% - 24px);
   display: flex;
   flex-direction: column;
   background: var(--panel);
   border: 3px solid var(--ink);
   box-shadow: var(--px) var(--px) 0 rgba(0, 0, 0, 0.4);
-  z-index: 3;
+  z-index: 6;
+}
+
+.journal header em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
 }
 
 .journal header {
@@ -468,10 +622,17 @@ button:disabled {
   font-size: 16px;
   color: var(--accent);
   white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.1;
 }
 
 .output-header div {
   display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -599,8 +760,7 @@ button:disabled {
 }
 
 .output-provider {
-  margin-left: 8px;
-  padding: 1px 6px;
+  padding: 0 5px;
   border: 2px solid var(--line);
   color: var(--muted);
   font-size: 11px;
@@ -1072,18 +1232,104 @@ button:disabled {
   }
 }
 
-@media (max-width: 980px) {
-  .sprite {
-    width: 64px;
-    height: 64px;
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 38%);
   }
 
-  .person-brain .sprite {
-    width: 96px;
-    height: 96px;
+  .output-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'tabs'
+      'main'
+      'input';
   }
 
-  .bubble {
-    max-width: 170px;
+  .viewtabs {
+    display: flex;
+    border-bottom: 3px solid var(--ink);
+    background: var(--panel);
+  }
+
+  .viewtabs button {
+    position: relative;
+    flex: 1;
+    padding: 8px;
+    background: var(--panel);
+    border: 0;
+    border-right: 2px solid var(--ink);
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .viewtabs button:last-child {
+    border-right: 0;
+  }
+
+  .viewtabs button[aria-selected='true'] {
+    background: var(--panel-2);
+    color: var(--accent);
+  }
+
+  .viewtabs-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-left: 6px;
+    background: var(--accent);
+    vertical-align: middle;
+  }
+
+  .stage,
+  .app > .output {
+    grid-area: main;
+  }
+
+  .app > .output {
+    border-left: 0;
+  }
+
+  .app[data-view='office'] > .output,
+  .app[data-view='chat'] > .stage {
+    display: none;
+  }
+
+  .output-header h1 {
+    font-size: 14px;
+  }
+
+  .output-header .btn-ghost {
+    padding: 4px 8px;
+  }
+
+  .journal {
+    width: calc(100% - 24px);
+    max-height: 55%;
+  }
+
+  .zoom-controls button {
+    min-width: 36px;
+    height: 34px;
+  }
+
+  .inputbar {
+    padding: 8px;
+  }
+}
+
+@media (max-height: 520px) {
+  .output-header {
+    padding-top: 4px;
+    padding-bottom: 4px;
   }
 }

@@ -39,6 +39,9 @@ export interface AgentSource {
 /** Tool names an agent.md may list. Providers translate them. */
 export const CANONICAL_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Bash'] as const
 
+/** Office room for agents that do not say where they sit. */
+export const DEFAULT_ZONE = 'General'
+
 const ID_RE = /^[a-z][a-z0-9-]{1,31}$/
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
@@ -140,6 +143,7 @@ export function parseAgentFile(
 
   const name = String(data.name ?? id).trim()
   const role = String(data.role ?? '').trim()
+  const zone = String(data.zona ?? data.zone ?? '').trim() || DEFAULT_ZONE
   const model = typeof data.model === 'string' && data.model.trim() ? data.model.trim() : undefined
   const bubbles = templates(data.burbujas, 'burbujas')
   const permissions = templates(data.permisos, 'permisos')
@@ -149,7 +153,7 @@ export function parseAgentFile(
   if (permissions) spec.permissions = permissions
 
   return {
-    info: { id, name, role, description, sprite },
+    info: { id, name, role, description, sprite, zone },
     spec,
     builtin: false
   }

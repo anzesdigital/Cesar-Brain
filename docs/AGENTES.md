@@ -11,6 +11,7 @@ También se le puede pedir al Cerebro: «crea un agente que…». Lo hace el age
 id: traductor
 name: Teo
 role: Traducción
+zona: Básicos
 description: Úsalo para traducir textos o documentos entre español e inglés manteniendo el formato.
 tools: [Read, Write, Glob]
 model: rapido
@@ -28,6 +29,7 @@ Eres Teo, traductor de un equipo que ayuda a {{USER}}. El Cerebro te pasa encarg
 | `description` | sí | Cuándo debe delegarle el Cerebro. Es lo que lee para decidir. |
 | cuerpo | sí | Instrucciones del agente. |
 | `name`, `role` | no | Cómo se ve en la oficina. |
+| `zona` | no | Sala de la oficina donde se sienta (Básicos, Desarrollo, Pruebas, Negocio, Decisiones, Dirección… o cualquier otra; una zona nueva crea una sala). Sin zona va a «General». Mayúsculas y tildes no importan. |
 | `tools` | no | Herramientas permitidas. Sin el campo, todas. |
 | `mcp` | no | Servidores de `mcp.json` que usa. Puede usar todas sus herramientas. |
 | `model` | no | Nivel según el uso habitual del agente: `rapido` (resumir, extraer, consultar, anotar), `normal` (investigar, redactar, documentos largos) o `potente` (solo programación o análisis complejos). Cada nivel se traduce al modelo real en `config.json` (`models.<proveedor>.aliases`). También acepta un alias o id de modelo concreto. |
