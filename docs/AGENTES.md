@@ -4,6 +4,8 @@ Cada agente es una carpeta con un archivo `agent.md` dentro de la carpeta de age
 
 También se le puede pedir al Cerebro: «crea un agente que…». Lo hace el agente integrado **configurador** (`brain/agents/configurador`), que propone el archivo y lo escribe con tu permiso.
 
+Los agentes integrados `consejo-*` (`brain/agents/consejo-*`, sala Decisiones) forman el **consejo** para decisiones difíciles. Solo los usa el Cerebro siguiendo el protocolo de la sección «Consejo» de `brain/brain.md`: cinco asesores opinan en paralelo, se revisan de forma anónima y el presidente da el veredicto. No tienen herramientas; solo razonan sobre lo que les pasa el Cerebro.
+
 ## Formato
 
 ```markdown

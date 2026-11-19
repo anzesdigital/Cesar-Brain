@@ -158,6 +158,34 @@ describe('brain prompt', () => {
     })
     expect(text).toBe('Hola Ana. Usa task.\n- "a"\n(vacía)')
   })
+
+  it('teaches the brain the council protocol', async () => {
+    const template = await readFile(resolve(__dirname, '../brain/brain.md'), 'utf8')
+    const text = brainPrompt(template, { roster: '', memory: '', user: 'Ana', delegation: '' })
+    expect(text).toContain('## Consejo (decisiones difíciles)')
+    expect(text).toContain('- Consultar al consejo')
+    for (const id of ['contrario', 'principios', 'expansion', 'outsider', 'ejecutor', 'presidente']) {
+      expect(text).toContain(`consejo-${id}`)
+    }
+    expect(text).not.toContain('{{USER}}')
+  })
+
+  it('gives tool-less agents (the council) no tools with either provider', () => {
+    const agent = {
+      info: {
+        id: 'consejo-contrario',
+        name: 'Carmen',
+        role: '',
+        description: 'd',
+        zone: 'Decisiones',
+        sprite: { hair: '#000000', shirt: '#000000', skin: '#000000' }
+      },
+      spec: { description: 'd', prompt: 'p', tools: [], mcp: [] },
+      builtin: true
+    } as AgentRecord
+    expect(toClaudeAgent(agent, undefined).tools).toEqual([])
+    expect(toCopilotAgent(agent, undefined).tools).toEqual([])
+  })
 })
 
 describe('tool translation', () => {

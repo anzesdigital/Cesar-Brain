@@ -52,6 +52,15 @@ describe('parseAgentFile', () => {
   })
 })
 
+const COUNCIL = [
+  'consejo-contrario',
+  'consejo-ejecutor',
+  'consejo-expansion',
+  'consejo-outsider',
+  'consejo-presidente',
+  'consejo-principios'
+]
+
 describe('loadAgents', () => {
   const builtin = { dir: resolve(__dirname, '../brain/agents'), builtin: true }
   const examples = { dir: resolve(__dirname, '../examples/agents'), builtin: false }
@@ -59,18 +68,41 @@ describe('loadAgents', () => {
   it('loads the built-in and example agents without errors', async () => {
     const { agents, errors } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
     expect(errors).toEqual([])
-    expect(agents.map((a) => a.info.id)).toEqual(['configurador', 'documentos', 'investigador'])
-    expect(agents[0].builtin).toBe(true)
-    expect(agents[1].builtin).toBe(false)
-    expect(agents[0].spec.prompt).toContain('/a/<id>/agent.md')
-    expect(agents[1].spec.prompt).toContain('ayuda a Ana')
-    expect(agents[1].info.description).toContain('que Ana adjunta')
+    expect(agents.map((a) => a.info.id)).toEqual([
+      'configurador',
+      ...COUNCIL,
+      'documentos',
+      'investigador'
+    ])
+    const byId = (id: string) => agents.find((a) => a.info.id === id)!
+    expect(byId('configurador').builtin).toBe(true)
+    expect(byId('documentos').builtin).toBe(false)
+    expect(byId('configurador').spec.prompt).toContain('/a/<id>/agent.md')
+    expect(byId('documentos').spec.prompt).toContain('ayuda a Ana')
+    expect(byId('documentos').info.description).toContain('que Ana adjunta')
     expect(rosterText(agents)).toContain('- "investigador": Iris')
+  })
+
+  it('ships the council as tool-less built-in agents in the Decisiones room', async () => {
+    const { agents, errors } = await loadAgents([builtin], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
+    expect(errors).toEqual([])
+    const council = agents.filter((a) => a.info.id.startsWith('consejo-'))
+    expect(council.map((a) => a.info.id)).toEqual(COUNCIL)
+    for (const agent of council) {
+      expect(agent.info.zone).toBe('Decisiones')
+      expect(agent.spec.tools).toEqual([])
+      expect(agent.info.description).toMatch(/^Solo para el consejo/)
+      expect(agent.spec.prompt).toContain('Ana')
+    }
+    for (const agent of council.filter((a) => a.info.id !== 'consejo-presidente')) {
+      expect(agent.spec.prompt).toContain('## Modo asesor')
+      expect(agent.spec.prompt).toContain('## Modo revisión')
+    }
   })
 
   it('names switched-off agents in the roster without offering them', async () => {
     const { agents } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
-    agents[2].info.disabled = true
+    agents.find((a) => a.info.id === 'investigador')!.info.disabled = true
     const roster = rosterText(agents)
     expect(roster).not.toContain('- "investigador"')
     expect(roster).toMatch(/Desactivados por el usuario.*Iris/)
@@ -91,7 +123,7 @@ describe('loadAgents', () => {
     await write('nuevo', VALID)
 
     const { agents, errors } = await loadAgents([builtin, { dir: user, builtin: false }], new Set(['banco']))
-    expect(agents.map((a) => a.info.id)).toEqual(['configurador', 'con-mcp', 'prueba'])
+    expect(agents.map((a) => a.info.id)).toEqual(['configurador', ...COUNCIL, 'con-mcp', 'prueba'])
     expect(agents.find((a) => a.info.id === 'con-mcp')!.spec.mcp).toEqual(['banco'])
     expect(errors).toHaveLength(2)
     expect(errors.join('\n')).toMatch(/id duplicado "configurador"/)
