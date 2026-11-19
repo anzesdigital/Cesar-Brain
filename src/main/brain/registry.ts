@@ -219,13 +219,25 @@ export async function loadAgents(
   return { agents, errors }
 }
 
-/** Roster text injected into the brain's system prompt. */
+/**
+ * Roster text injected into the brain's system prompt. Switched-off agents are
+ * only named, so the brain can tell the user to switch them on.
+ */
 export function rosterText(agents: AgentRecord[]): string {
-  if (agents.length === 0) return '(No hay agentes disponibles; responde tú mismo.)'
-  return agents
-    .map((a) => {
-      const role = a.info.role ? ` — ${a.info.role}` : ''
-      return `- "${a.info.id}": ${a.info.name}${role}. ${a.info.description}`
-    })
-    .join('\n')
+  const enabled = agents.filter((a) => !a.info.disabled)
+  const off = agents.filter((a) => a.info.disabled)
+  const lines = enabled.length
+    ? enabled.map((a) => {
+        const role = a.info.role ? ` — ${a.info.role}` : ''
+        return `- "${a.info.id}": ${a.info.name}${role}. ${a.info.description}`
+      })
+    : ['(No hay agentes disponibles; responde tú mismo.)']
+  if (off.length) {
+    const names = off.map((a) => `${a.info.name}${a.info.role ? ` (${a.info.role})` : ''}`).join(', ')
+    lines.push(
+      '',
+      `Desactivados por el usuario (no puedes usarlos; si uno hace falta, dile que lo active pulsando sobre él en la oficina): ${names}.`
+    )
+  }
+  return lines.join('\n')
 }

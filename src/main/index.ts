@@ -13,7 +13,7 @@ import type { BrainProvider } from './brain/providers/types'
 import { CANONICAL_TOOLS, loadAgents, type AgentRecord } from './brain/registry'
 import { SessionStore } from './brain/sessions'
 import { UsageStore } from './brain/usage'
-import { defaultConfig, loadConfig, updateConfigFile, updateReposInFile, type AppConfig } from './config'
+import { defaultConfig, loadConfig, readRawConfig, updateConfigFile, updateReposInFile, type AppConfig } from './config'
 import { defaultHomeDir, ensureHome, homePaths } from './home'
 import { emptyCatalog, loadMcp, type McpCatalog } from './mcp'
 import { agentReposText, REPO_NAME_RE, reposFor, usesFiles } from './repos'
@@ -82,6 +82,8 @@ async function reload(): Promise<void> {
     sharedRules
   )
   agents = result.agents
+  const disabled = new Set(config.disabledAgents)
+  for (const agent of agents) if (disabled.has(agent.info.id)) agent.info.disabled = true
 
   // Repos: tell each agent that works with files which ones it may use.
   const repoNames = new Set(config.repos.map((r) => r.name))
@@ -275,6 +277,18 @@ async function main(): Promise<void> {
     await updateReposInFile(home.configFile, (repos) => {
       delete repos[String(name)]
     })
+    await reload()
+  })
+  ipcMain.handle('agents:enabled', async (_e, id: string, enabled: boolean) => {
+    const agentId = String(id)
+    if (!agents.some((a) => a.info.id === agentId)) throw new Error(`Agente desconocido: ${agentId}`)
+    // Read the list as written, so ids of agents that are missing right now are kept.
+    const raw = await readRawConfig(home.configFile)
+    const current = Array.isArray(raw.disabledAgents)
+      ? raw.disabledAgents.filter((x): x is string => typeof x === 'string')
+      : []
+    const next = enabled === true ? current.filter((x) => x !== agentId) : [...new Set([...current, agentId])]
+    await updateConfigFile(home.configFile, { disabledAgents: next })
     await reload()
   })
   ipcMain.handle('skin:set', async (_e, skin: SkinId) => {

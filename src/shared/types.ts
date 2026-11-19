@@ -17,6 +17,8 @@ export interface AgentInfo {
   sprite: SpriteSpec
   /** Room of the office the agent sits in (agent.md `zona`). */
   zone: string
+  /** Switched off by the user (config.json `disabledAgents`): the brain cannot use it. */
+  disabled?: boolean
 }
 
 export interface ThoughtEvent {
@@ -156,6 +158,8 @@ export interface BrainApi {
   addRepo(): Promise<string | undefined>
   setRepoAccess(name: string, write: boolean): Promise<void>
   removeRepo(name: string): Promise<void>
+  /** Switches an agent on or off (saved in config.json `disabledAgents`). */
+  setAgentEnabled(id: string, enabled: boolean): Promise<void>
   respondPermission(id: string, allow: boolean): Promise<void>
   openPath(path: string): Promise<void>
   pathForFile(file: File): string

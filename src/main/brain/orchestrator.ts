@@ -95,7 +95,9 @@ export class BrainOrchestrator {
 
     const provider = this.config.getProvider()
     const appConfig = this.config.getConfig()
-    const agents = this.config.getAgents()
+    const allAgents = this.config.getAgents()
+    // Switched-off agents are not given to the provider, so they cannot be called.
+    const agents = allAgents.filter((a) => !a.info.disabled)
     const resumeId = this.sessions.sessionId(provider.id)
     let result: RunResult
     try {
@@ -108,7 +110,7 @@ export class BrainOrchestrator {
         {
           prompt: fullPrompt,
           systemPrompt: brainPrompt(template, {
-            roster: rosterText(agents),
+            roster: rosterText(allAgents),
             memory,
             user: appConfig.userName,
             delegation: provider.delegationText(appConfig),

@@ -44,22 +44,81 @@ function Person({ agent, register }: { agent: AgentInfo; register: (id: string, 
   const select = useStore((s) => s.select)
   const state: AgentState = thought?.state ?? 'idle'
   const isBrain = agent.id === BRAIN_ID
+  const off = Boolean(agent.disabled)
+  const who = agent.role ? `${agent.name} — ${agent.role}` : agent.name
 
   return (
-    <button
-      type="button"
-      className={`person person-${state}${isBrain ? ' person-brain' : ''}${selected ? ' person-selected' : ''}`}
+    <div
+      className={`person-slot${state === 'idle' ? '' : ' person-slot-active'}`}
       // The most recent thought is drawn on top of its neighbours'.
       style={state === 'idle' || !thought ? undefined : { zIndex: 3 + (Math.floor(thought.ts / 100) % 10_000_000) }}
-      onClick={() => select(selected ? undefined : agent.id)}
-      title={agent.role ? `${agent.name} — ${agent.role}\n${agent.description}` : `${agent.name}\n${agent.description}`}
     >
-      <Bubble text={thought?.text ?? ''} state={state} />
-      <span className="person-body" ref={(el) => register(agent.id, el)}>
-        <Sprite spec={agent.sprite} isBrain={isBrain} />
-      </span>
-      <span className="nameplate">{agent.name}</span>
-    </button>
+      <button
+        type="button"
+        className={`person person-${state}${isBrain ? ' person-brain' : ''}${selected ? ' person-selected' : ''}${off ? ' person-off' : ''}`}
+        onClick={() => select(selected ? undefined : agent.id)}
+        title={`${who}${off ? ' (desactivado)' : ''}\n${agent.description}`}
+      >
+        <Bubble text={thought?.text ?? ''} state={state} />
+        <span className="person-body" ref={(el) => register(agent.id, el)}>
+          <Sprite spec={agent.sprite} isBrain={isBrain} />
+        </span>
+        <span className="nameplate">{agent.name}</span>
+      </button>
+      {!isBrain && <AgentToggle agent={agent} compact />}
+    </div>
+  )
+}
+
+/** Switches an agent on or off; the brain cannot use agents that are off. */
+function AgentToggle({ agent, compact = false }: { agent: AgentInfo; compact?: boolean }) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const on = !agent.disabled
+
+  const flip = async (): Promise<void> => {
+    setPending(true)
+    setError('')
+    try {
+      await window.brain.setAgentEnabled(agent.id, !on)
+    } catch (err) {
+      setError((err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className={`person-toggle${on ? '' : ' person-toggle-off'}`}
+        disabled={pending}
+        aria-label={on ? `Desactivar a ${agent.name}` : `Activar a ${agent.name}`}
+        title={error || (on ? 'Desactivar (el Cerebro no lo usará)' : 'Activar')}
+        onClick={() => void flip()}
+      >
+        {on ? '×' : '+'}
+      </button>
+    )
+  }
+
+  return (
+    <div className="journal-toggle">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        className={`switch${on ? ' switch-on' : ''}`}
+        disabled={pending}
+        onClick={() => void flip()}
+      >
+        <span className="switch-knob" aria-hidden="true" />
+        <span className="switch-label">{on ? 'Activo' : 'Desactivado'}</span>
+      </button>
+      <small>{on ? 'El Cerebro puede encargarle trabajo.' : 'El Cerebro no lo usará hasta que lo actives.'}</small>
+      {error && <p className="inputbar-error">{error}</p>}
+    </div>
   )
 }
 
@@ -84,6 +143,7 @@ function Journal() {
         </button>
       </header>
       <p className="journal-desc">{agent.description}</p>
+      {agent.id !== BRAIN_ID && <AgentToggle agent={agent} />}
       {history?.length ? (
         <ol>
           {[...history].reverse().map((t) => (
@@ -236,7 +296,7 @@ export function Office() {
   // Drag the floor to pan; two fingers pinch to zoom.
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const onPointerDown = (e: PointerEvent<HTMLElement>): void => {
-    if ((e.target as HTMLElement).closest('.person, .zoom-controls, .journal, .office-empty')) return
+    if ((e.target as HTMLElement).closest('.person-slot, .zoom-controls, .journal, .office-empty')) return
     e.currentTarget.setPointerCapture(e.pointerId)
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
   }
@@ -280,7 +340,7 @@ export function Office() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onDoubleClick={(e) => {
-        if (!(e.target as HTMLElement).closest('.person, .zoom-controls, .journal')) fit()
+        if (!(e.target as HTMLElement).closest('.person-slot, .zoom-controls, .journal')) fit()
       }}
     >
       <div ref={world} className="office-world" style={worldStyle}>

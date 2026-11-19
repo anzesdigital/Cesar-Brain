@@ -33,6 +33,11 @@ describe('config', () => {
     expect(() => parseConfig({ provider: 'gemini' })).toThrow(/provider/)
   })
 
+  it('reads disabledAgents and ignores anything that is not a list of ids', () => {
+    expect(parseConfig({ disabledAgents: [' iris ', 'iris', 3, ''] }).disabledAgents).toEqual(['iris'])
+    expect(parseConfig({ disabledAgents: 'iris' }).disabledAgents).toEqual([])
+  })
+
   it('falls back to defaults on a broken file and says why', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'cfg-'))
     const file = join(dir, 'config.json')

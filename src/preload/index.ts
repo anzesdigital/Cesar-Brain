@@ -23,6 +23,7 @@ const api: BrainApi = {
   addRepo: () => ipcRenderer.invoke('repos:add'),
   setRepoAccess: (name, write) => ipcRenderer.invoke('repos:access', name, write),
   removeRepo: (name) => ipcRenderer.invoke('repos:remove', name),
+  setAgentEnabled: (id, enabled) => ipcRenderer.invoke('agents:enabled', id, enabled),
   respondPermission: (id, allow) => ipcRenderer.invoke('permission:respond', id, allow),
   openPath: (path) => ipcRenderer.invoke('path:open', path),
   pathForFile: (file) => webUtils.getPathForFile(file),

@@ -194,7 +194,8 @@ function AgentsSettings() {
       <h3>Agentes y configuración</h3>
       <p className="modal-note">
         Cada agente es una carpeta con un <code>agent.md</code> dentro de <code>{status.agentsDir}</code>. Añade, edita o
-        borra carpetas y el equipo se actualiza solo. Una carpeta que empieza por <code>_</code> queda desactivada.
+        borra carpetas y el equipo se actualiza solo. Para desactivar un agente sin borrarlo, pulsa sobre él en la oficina
+        (o en la × que aparece al pasar el ratón): el Cerebro no lo usará hasta que lo vuelvas a activar.
       </p>
       <div className="modal-actions">
         <button type="button" className="btn-ghost" onClick={() => void window.brain.openPath(status.agentsDir)}>

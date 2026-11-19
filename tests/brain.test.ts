@@ -68,6 +68,16 @@ describe('loadAgents', () => {
     expect(rosterText(agents)).toContain('- "investigador": Iris')
   })
 
+  it('names switched-off agents in the roster without offering them', async () => {
+    const { agents } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
+    agents[2].info.disabled = true
+    const roster = rosterText(agents)
+    expect(roster).not.toContain('- "investigador"')
+    expect(roster).toMatch(/Desactivados por el usuario.*Iris/)
+    for (const a of agents) a.info.disabled = true
+    expect(rosterText(agents)).toContain('No hay agentes disponibles')
+  })
+
   it('keeps the first agent on a repeated id, skips disabled folders, and reports bad files', async () => {
     const user = await mkdtemp(join(tmpdir(), 'agentes-'))
     const write = async (folder: string, content: string): Promise<void> => {

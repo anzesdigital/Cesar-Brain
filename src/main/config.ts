@@ -20,6 +20,8 @@ export interface AppConfig {
   repos: Repo[]
   /** Looks of the app. */
   skin: SkinId
+  /** Agent ids the user switched off; the brain does not see them. */
+  disabledAgents: string[]
 }
 
 const modelsSchema = z
@@ -41,8 +43,15 @@ const configSchema = z.object({
   // Checked entry by entry in parseRepos, so one bad repo does not break the file.
   repos: z.unknown().optional(),
   // An unknown skin only falls back to the default, see skinOf.
-  skin: z.unknown().optional()
+  skin: z.unknown().optional(),
+  // Anything that is not a list of ids is ignored, see disabledOf.
+  disabledAgents: z.unknown().optional()
 })
+
+function disabledOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return [...new Set(raw.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean))]
+}
 
 function isSkin(value: unknown): value is SkinId {
   return typeof value === 'string' && Object.hasOwn(SKINS, value)
@@ -64,7 +73,8 @@ export function defaultConfig(): AppConfig {
       copilot: { brain: '', aliases: {} }
     },
     repos: [],
-    skin: 'clasica'
+    skin: 'clasica',
+    disabledAgents: []
   }
 }
 
@@ -86,7 +96,8 @@ export function parseConfig(raw: unknown): AppConfig {
     userName: data.userName?.trim() ?? '',
     models: { claude: models('claude'), copilot: models('copilot') },
     repos: parseRepos(data.repos).repos,
-    skin: isSkin(data.skin) ? data.skin : base.skin
+    skin: isSkin(data.skin) ? data.skin : base.skin,
+    disabledAgents: disabledOf(data.disabledAgents)
   }
 }
 
