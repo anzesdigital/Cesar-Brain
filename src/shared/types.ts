@@ -41,7 +41,42 @@ export interface ChatMessage {
   text: string
   files?: string[]
   error?: boolean
+  /** Small remark shown above an answer (e.g. it was resumed from a summary). */
+  note?: string
   ts: number
+}
+
+/** One saved conversation, as listed in the history. */
+export interface ConversationMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  /** Messages in it. */
+  count: number
+}
+
+/**
+ * How an old conversation continues: `full` resumes the provider session
+ * (the whole history is read again), `summary` starts a new session with the
+ * last visible messages only (cheaper).
+ */
+export type ResumeMode = 'full' | 'summary'
+
+/** The conversation the brain continues. */
+export interface ConversationState {
+  id: string
+  /** Set while the next message will resume a conversation opened from the history. */
+  resume?: {
+    /** What the app would pick by itself. */
+    auto: ResumeMode
+    /** What the user picked instead, if anything. */
+    forced?: ResumeMode
+    /** Full resume is possible (there is a session for the current provider). */
+    canFull: boolean
+    /** Rough size of the history, in tokens. */
+    tokens: number
+  }
 }
 
 export interface IncomingFile {
@@ -96,6 +131,7 @@ export interface AppStatus {
   /** Problems found while reading config.json, mcp.json or agent files. */
   problems: string[]
   repos: RepoStatus[]
+  conversation: ConversationState
 }
 
 export interface TokenCount {
@@ -158,6 +194,14 @@ export interface BrainApi {
   addRepo(): Promise<string | undefined>
   setRepoAccess(name: string, write: boolean): Promise<void>
   removeRepo(name: string): Promise<void>
+  /** Saved conversations, newest first; `query` searches titles and messages. */
+  listConversations(query?: string): Promise<ConversationMeta[]>
+  /** Makes a saved conversation the active one and resolves with its messages. Costs no tokens. */
+  openConversation(id: string): Promise<ChatMessage[]>
+  renameConversation(id: string, title: string): Promise<void>
+  deleteConversation(id: string): Promise<void>
+  /** Overrides how the next message resumes an old conversation; undefined = automatic. */
+  setResumeMode(mode: ResumeMode | undefined): Promise<void>
   /** Switches an agent on or off (saved in config.json `disabledAgents`). */
   setAgentEnabled(id: string, enabled: boolean): Promise<void>
   respondPermission(id: string, allow: boolean): Promise<void>

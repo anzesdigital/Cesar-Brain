@@ -355,6 +355,10 @@ export function App() {
     // The skin goes on <html> before the store update, so sprites repaint with its colors.
     const onStatus = (status: AppStatus): void => {
       applySkin(status.skin)
+      // Another conversation became active (new, deleted…): drop what is on screen.
+      // When it was opened from the history, its messages arrive right after.
+      const previous = useStore.getState().status?.conversation.id
+      if (previous && previous !== status.conversation.id) s.clearConversation()
       s.setStatus(status)
     }
     void api.getStatus().then((status) => {

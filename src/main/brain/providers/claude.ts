@@ -15,6 +15,7 @@ import { delegationGuide, tierModels } from './guide'
 import type { McpServer } from '../../mcp'
 import type { AgentRecord } from '../registry'
 import { limitsFromPlan, RunMeter, type ApiUsage, type PlanUsage } from '../usage'
+import { withHistory } from '../resume'
 import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
 
 const DELEGATION_TOOLS = new Set(['Agent', 'Task'])
@@ -263,8 +264,16 @@ export class ClaudeProvider implements BrainProvider {
 
   constructor(private getApiKey: () => string | undefined) {}
 
-  run(req: RunRequest, sink: RunSink): Promise<RunResult> {
-    return new ClaudeRun(req, sink, this.getApiKey()).execute()
+  async run(req: RunRequest, sink: RunSink): Promise<RunResult> {
+    const fresh = { ...req, resumeId: undefined, prompt: withHistory(req.prompt, req.history) }
+    if (!req.resumeId) return new ClaudeRun(fresh, sink, this.getApiKey()).execute()
+    const first = await new ClaudeRun(req, sink, this.getApiKey()).execute()
+    // The saved session may be gone (Claude Code deletes old transcripts):
+    // start a new one with the summary instead.
+    const lost = first.failed && !req.signal.aborted && (!first.sessionId || /no conversation found/i.test(first.text))
+    if (!lost) return first
+    const retry = await new ClaudeRun(fresh, sink, this.getApiKey()).execute()
+    return { ...retry, resumeLost: true }
   }
 
   async auth(): Promise<ProviderAuth> {

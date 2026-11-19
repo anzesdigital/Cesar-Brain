@@ -1,14 +1,23 @@
 import { readFile } from 'node:fs/promises'
 import { relative } from 'node:path'
 import matter from 'gray-matter'
-import { BRAIN_ID, type AgentState, type ChatMessage, type ThoughtEvent, type UsageSnapshot } from '@shared/types'
+import {
+  BRAIN_ID,
+  type AgentState,
+  type ChatMessage,
+  type ConversationState,
+  type ResumeMode,
+  type ThoughtEvent,
+  type UsageSnapshot
+} from '@shared/types'
 import type { AppConfig } from '../config'
 import type { McpCatalog } from '../mcp'
 import { brainReposText } from '../repos'
 import { fillPlaceholders, rosterText, type AgentRecord } from './registry'
 import { decide, type PermissionGate } from './permissions'
 import type { BrainProvider, RunResult, RunSink } from './providers/types'
-import type { SessionStore } from './sessions'
+import { chooseResumeMode, estimateTokens, summaryPreamble } from './resume'
+import type { ConversationStore } from './sessions'
 import { render, templateFor } from './bubbles'
 import { firstSentence, permissionSummary, thoughtForTool, truncate } from './thoughts'
 import type { UsageStore } from './usage'
@@ -67,7 +76,7 @@ export class BrainOrchestrator {
 
   constructor(
     private config: BrainConfig,
-    private sessions: SessionStore,
+    private sessions: ConversationStore,
     private gate: PermissionGate,
     private events: BrainEvents
   ) {}
@@ -81,24 +90,55 @@ export class BrainOrchestrator {
     this.gate.denyAll()
   }
 
+  /** The active conversation and, if it was just reopened, how it will resume. */
+  conversationState(): ConversationState {
+    const state: ConversationState = { id: this.sessions.id }
+    if (!this.sessions.resumePending) return state
+    const canFull = Boolean(this.sessions.sessionId(this.config.getProvider().id))
+    const tokens = estimateTokens(this.sessions.messages)
+    const auto = chooseResumeMode({ canFull, tokens, maxTokens: this.config.getConfig().resumeMaxTokens })
+    const forced = this.sessions.forcedMode
+    state.resume = { auto, canFull, tokens, ...(forced && forced !== auto ? { forced } : {}) }
+    return state
+  }
+
+  /** How this run continues the conversation (decided before the new message is saved). */
+  private resumePlan(providerId: BrainProvider['id']): { resumeId?: string; history?: string; mode?: ResumeMode } {
+    const previous = this.sessions.messages
+    if (!previous.length) return {}
+    const sessionId = this.sessions.sessionId(providerId)
+    const history = summaryPreamble(previous)
+    let mode: ResumeMode = sessionId ? 'full' : 'summary'
+    if (this.sessions.resumePending) {
+      const resume = this.conversationState().resume
+      mode = resume?.forced ?? resume?.auto ?? mode
+      if (mode === 'full' && !sessionId) mode = 'summary'
+    }
+    // The summary also travels with a full resume, in case the session is gone.
+    return mode === 'full' ? { resumeId: sessionId, history, mode } : { history, mode }
+  }
+
   async run(prompt: string, filePaths: string[]): Promise<void> {
     if (this.busy) throw new Error('El Cerebro ya está trabajando')
     const abort = new AbortController()
     this.abort = abort
     this.events.busy(true)
 
-    const files = filePaths.map((p) => relative(this.config.workspaceDir, p).replace(/\\/g, '/'))
+    const provider = this.config.getProvider()
+    const reopened = this.sessions.resumePending
+    const plan = this.resumePlan(provider.id)
+
+    const files =filePaths.map((p) => relative(this.config.workspaceDir, p).replace(/\\/g, '/'))
     const userMessage: ChatMessage = { role: 'user', text: prompt, files, ts: Date.now() }
     await this.sessions.add(userMessage)
     this.events.message(userMessage)
     this.think(BRAIN_ID, 'thinking', 'Déjame pensar…')
 
-    const provider = this.config.getProvider()
     const appConfig = this.config.getConfig()
     const allAgents = this.config.getAgents()
     // Switched-off agents are not given to the provider, so they cannot be called.
     const agents = allAgents.filter((a) => !a.info.disabled)
-    const resumeId = this.sessions.sessionId(provider.id)
+    const { resumeId, history } = plan
     let result: RunResult
     try {
       const template = await readOptional(this.config.brainPromptFile)
@@ -121,6 +161,7 @@ export class BrainOrchestrator {
           config: appConfig,
           workspaceDir: this.config.workspaceDir,
           resumeId,
+          history,
           signal: abort.signal
         },
         this.sink(provider.id)
@@ -158,6 +199,9 @@ export class BrainOrchestrator {
       error: failed,
       ts: Date.now()
     }
+    if (result.resumeLost) reply.note = 'Retomada con resumen: la sesión original ya no existe.'
+    else if (reopened && plan.mode === 'summary') reply.note = 'Retomada con resumen de los últimos mensajes.'
+    else if (reopened && plan.mode === 'full') reply.note = 'Retomada con el contexto completo.'
     await this.sessions.add(reply)
     this.events.message(reply)
     this.events.busy(false)

@@ -1,6 +1,7 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
 import { SKINS, type ProviderId, type SkinId } from '@shared/types'
+import { DEFAULT_RESUME_MAX_TOKENS } from './brain/resume'
 import { parseRepos, type Repo } from './repos'
 
 /** Model names for one provider. */
@@ -22,6 +23,8 @@ export interface AppConfig {
   skin: SkinId
   /** Agent ids the user switched off; the brain does not see them. */
   disabledAgents: string[]
+  /** Above this estimated size, an old conversation resumes from a summary. */
+  resumeMaxTokens: number
 }
 
 const modelsSchema = z
@@ -45,7 +48,8 @@ const configSchema = z.object({
   // An unknown skin only falls back to the default, see skinOf.
   skin: z.unknown().optional(),
   // Anything that is not a list of ids is ignored, see disabledOf.
-  disabledAgents: z.unknown().optional()
+  disabledAgents: z.unknown().optional(),
+  resumeMaxTokens: z.number().int().min(0).optional()
 })
 
 function disabledOf(raw: unknown): string[] {
@@ -74,7 +78,8 @@ export function defaultConfig(): AppConfig {
     },
     repos: [],
     skin: 'clasica',
-    disabledAgents: []
+    disabledAgents: [],
+    resumeMaxTokens: DEFAULT_RESUME_MAX_TOKENS
   }
 }
 
@@ -97,7 +102,8 @@ export function parseConfig(raw: unknown): AppConfig {
     models: { claude: models('claude'), copilot: models('copilot') },
     repos: parseRepos(data.repos).repos,
     skin: isSkin(data.skin) ? data.skin : base.skin,
-    disabledAgents: disabledOf(data.disabledAgents)
+    disabledAgents: disabledOf(data.disabledAgents),
+    resumeMaxTokens: data.resumeMaxTokens ?? base.resumeMaxTokens
   }
 }
 

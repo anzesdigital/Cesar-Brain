@@ -135,9 +135,17 @@ interface UsageData {
   limitsAvailable?: boolean
   plan?: string
   limitsProvider?: ProviderId
-  /** Running cost total last reported for a session, to charge each run only its own part. */
+  /**
+   * Running cost total last reported per session, to charge each run only its
+   * own part. One entry per conversation, so going back to an old one still works.
+   */
+  sessions?: Record<string, number>
+  /** Older files kept only the last session. */
   session?: { id: string; costUsd: number }
 }
+
+/** Sessions whose running cost is remembered. */
+const KEEP_SESSIONS = 200
 
 /** Usage history kept on disk: tokens per agent per day, plus the last known plan limits. */
 export class UsageStore {
@@ -151,7 +159,10 @@ export class UsageStore {
   async load(): Promise<void> {
     try {
       const parsed = JSON.parse(await readFile(this.file, 'utf8')) as Partial<UsageData>
-      this.data = { ...parsed, days: parsed.days ?? {}, limits: parsed.limits ?? [] }
+      const sessions = { ...(parsed.sessions ?? {}) }
+      if (parsed.session && !(parsed.session.id in sessions)) sessions[parsed.session.id] = parsed.session.costUsd
+      const { session: _legacy, ...rest } = parsed
+      this.data = { ...rest, days: parsed.days ?? {}, limits: parsed.limits ?? [], sessions }
     } catch {
       this.data = { days: {}, limits: [] }
     }
@@ -187,11 +198,18 @@ export class UsageStore {
       day.agents[agentId] = addCount(day.agents[agentId] ?? emptyCount(), count)
     }
     if (typeof sessionCostUsd === 'number' && sessionCostUsd >= 0) {
-      const previous = this.data.session
-      const known = previous !== undefined && previous.id === sessionId && previous.costUsd <= sessionCostUsd
-      const before = known ? previous.costUsd : resumed ? sessionCostUsd : 0
+      const sessions = (this.data.sessions ??= {})
+      const previous = sessionId !== undefined ? sessions[sessionId] : undefined
+      const known = previous !== undefined && previous <= sessionCostUsd
+      const before = known ? previous : resumed ? sessionCostUsd : 0
       day.costUsd += sessionCostUsd - before
-      if (sessionId) this.data.session = { id: sessionId, costUsd: sessionCostUsd }
+      if (sessionId) {
+        // Re-insert so the most recent sessions are last, then drop the oldest.
+        delete sessions[sessionId]
+        sessions[sessionId] = sessionCostUsd
+        const ids = Object.keys(sessions)
+        for (const old of ids.slice(0, Math.max(0, ids.length - KEEP_SESSIONS))) delete sessions[old]
+      }
     }
     this.data.days[date] = day
 

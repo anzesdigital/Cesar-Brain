@@ -14,6 +14,11 @@ export interface RunRequest {
   workspaceDir: string
   /** Provider session to continue, if any. */
   resumeId?: string
+  /**
+   * Last messages of the conversation (resume.ts summaryPreamble). Put in front
+   * of the prompt when there is no `resumeId`, or when resuming it fails.
+   */
+  history?: string
   signal: AbortSignal
 }
 
@@ -53,6 +58,8 @@ export interface RunResult {
   sessionCostUsd?: number
   /** Premium requests spent by this run (Copilot). */
   premiumRequests?: number
+  /** `resumeId` could not be resumed, so the run started fresh with `history`. */
+  resumeLost?: boolean
 }
 
 export interface BrainProvider {

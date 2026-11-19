@@ -5,6 +5,7 @@ import { parseOptions, type ChoiceOption } from '@shared/options'
 import { PROVIDERS, type ChatMessage } from '@shared/types'
 import { useStore } from '../store'
 import { UsageButton } from '../usage/UsagePanel'
+import { HistoryPanel } from './HistoryPanel'
 
 function Markdown({ text }: { text: string }) {
   const html = useMemo(
@@ -156,6 +157,7 @@ function BrainMessage({ message, live, reply }: { message: ChatMessage; live: bo
   const chosen = reply?.trim()
   return (
     <article className={`msg msg-brain${message.error ? ' msg-error' : ''}`}>
+      {message.note && <p className="msg-note">{message.note}</p>}
       {body && <Markdown text={body} />}
       {options.length > 0 && (
         <Choices options={options} live={live} chosen={options.some((o) => o.label === chosen) ? chosen : undefined} />
@@ -171,17 +173,24 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
   const status = useStore((s) => s.status)
   const clearConversation = useStore((s) => s.clearConversation)
   const end = useRef<HTMLDivElement>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   // The options block only becomes buttons once the answer is complete.
   const streamBody = useMemo(() => parseOptions(streamText).body, [streamText])
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
-  }, [messages, streamText])
+  }, [messages, streamText, historyOpen])
 
   const startNew = async (): Promise<void> => {
     await window.brain.newConversation()
     clearConversation()
+    setHistoryOpen(false)
   }
+
+  // A message was sent: show the conversation again.
+  useEffect(() => {
+    if (busy) setHistoryOpen(false)
+  }, [busy])
 
   return (
     <section className="output" aria-label="Conversación">
@@ -199,6 +208,15 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
           <button type="button" className="btn-ghost" onClick={() => void startNew()} disabled={messages.length === 0 && !busy}>
             Nueva
           </button>
+          <button
+            type="button"
+            className={`btn-ghost${historyOpen ? ' usage-range-on' : ''}`}
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+            title="Conversaciones anteriores"
+          >
+            Historial
+          </button>
           <UsageButton onClick={onUsage} />
           <button
             type="button"
@@ -211,11 +229,19 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
         </div>
       </header>
 
-      <div className="output-scroll">
+      {historyOpen && <HistoryPanel onClose={() => setHistoryOpen(false)} />}
+      <div className="output-scroll" hidden={historyOpen}>
         {messages.length === 0 && !busy && (
           <div className="output-empty">
             <p>Escribe lo que necesitas o suelta un archivo.</p>
             <p>El Cerebro decide quién del equipo lo resuelve y verás lo que piensa cada uno.</p>
+            <p>
+              ¿Quieres seguir algo de antes?{' '}
+              <button type="button" className="link-button" onClick={() => setHistoryOpen(true)}>
+                Abre el historial
+              </button>
+              .
+            </p>
           </div>
         )}
         {messages.map((m, i) => (

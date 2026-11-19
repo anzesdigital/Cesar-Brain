@@ -33,6 +33,8 @@ interface State {
   select(agentId?: string): void
   setStatus(status: AppStatus): void
   clearConversation(): void
+  /** Shows a conversation opened from the history. */
+  openConversation(messages: ChatMessage[]): void
 }
 
 export const useStore = create<State>((set) => ({
@@ -65,5 +67,6 @@ export const useStore = create<State>((set) => ({
   select: (selectedAgent) => set({ selectedAgent }),
   setStatus: (status) => set({ status }),
   setUsage: (usage) => set({ usage }),
-  clearConversation: () => set({ messages: [], streamText: '', thoughts: {}, history: {} })
+  clearConversation: () => set({ messages: [], streamText: '', thoughts: {}, history: {} }),
+  openConversation: (messages) => set({ messages, streamText: '', thoughts: {}, history: {} })
 }))

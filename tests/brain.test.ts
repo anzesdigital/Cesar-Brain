@@ -254,6 +254,20 @@ describe('usage', () => {
     await reloaded.recordRun({ cerebro: count }, 'viejo', 6, true)
     await reloaded.recordRun({ cerebro: count }, 'viejo', 6.5, true)
     expect(reloaded.snapshot().days[1].costUsd).toBeCloseTo(0.55)
+
+    // Going back to an older conversation charges its new part, not $0.
+    await reloaded.recordRun({ cerebro: count }, 's2', 0.2, true)
+    expect(reloaded.snapshot().days[1].costUsd).toBeCloseTo(0.7)
+  })
+
+  it('reads the single session of older usage files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'uso-'))
+    const file = join(dir, 'usage.json')
+    await writeFile(file, JSON.stringify({ days: {}, limits: [], session: { id: 's1', costUsd: 1 } }), 'utf8')
+    const store = new UsageStore(file, () => new Date(2026, 10, 13, 10))
+    await store.load()
+    await store.recordRun({}, 's1', 1.5, true)
+    expect(store.snapshot().days[0].costUsd).toBeCloseTo(0.5)
   })
 
   it('keeps limits with their provider and clears them', async () => {

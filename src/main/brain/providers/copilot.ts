@@ -13,6 +13,7 @@ import type { McpServer } from '../../mcp'
 import type { AgentRecord } from '../registry'
 import { addCount, emptyCount } from '../usage'
 import { fromCopilotTool, permissionToCanonical, toCopilotTools, type CopilotPermission } from './toolmap'
+import { withHistory } from '../resume'
 import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
 
 const QUOTA_TIMEOUT_MS = 5000
@@ -272,6 +273,7 @@ export class CopilotProvider implements BrainProvider {
     let session: CopilotSession | undefined
     let text = ''
     let failed = false
+    let resumeLost = false
     try {
       const client = await this.getClient()
       const onRequest: PermissionHandler = async (request) => {
@@ -298,9 +300,16 @@ export class CopilotProvider implements BrainProvider {
       const model = req.config.models.copilot.brain
       if (model) options.model = model
 
-      session = req.resumeId
-        ? await client.resumeSession(req.resumeId, options).catch(() => client.createSession(options))
-        : await client.createSession(options)
+      let prompt = req.resumeId ? req.prompt : withHistory(req.prompt, req.history)
+      if (req.resumeId) {
+        session = await client.resumeSession(req.resumeId, options).catch(() => undefined)
+        if (!session) {
+          // The old session is gone: start a new one with the summary instead.
+          resumeLost = true
+          prompt = withHistory(req.prompt, req.history)
+        }
+      }
+      session ??= await client.createSession(options)
       sink.sessionId(session.sessionId)
 
       const active = session
@@ -321,7 +330,7 @@ export class CopilotProvider implements BrainProvider {
           { once: true }
         )
       })
-      await active.send({ prompt: req.prompt })
+      await active.send({ prompt })
       await finished
 
       if (req.signal.aborted) {
@@ -345,7 +354,8 @@ export class CopilotProvider implements BrainProvider {
       failed,
       tokens: translator.totals(),
       sessionId: session?.sessionId,
-      premiumRequests: translator.premium
+      premiumRequests: translator.premium,
+      ...(resumeLost ? { resumeLost } : {})
     }
   }
 

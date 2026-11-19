@@ -3,7 +3,16 @@ import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
-import { SKINS, type AppStatus, type IncomingFile, type ProviderId, type RepoStatus, type SkinId } from '@shared/types'
+import {
+  SKINS,
+  type AppStatus,
+  type ConversationState,
+  type IncomingFile,
+  type ProviderId,
+  type RepoStatus,
+  type ResumeMode,
+  type SkinId
+} from '@shared/types'
 import { BrainOrchestrator } from './brain/orchestrator'
 import { isInside, PermissionGate } from './brain/permissions'
 import { ClaudeProvider } from './brain/providers/claude'
@@ -11,7 +20,7 @@ import { CopilotProvider } from './brain/providers/copilot'
 import { COPILOT_MISSING } from './brain/providers/toolmap'
 import type { BrainProvider } from './brain/providers/types'
 import { CANONICAL_TOOLS, loadAgents, type AgentRecord } from './brain/registry'
-import { SessionStore } from './brain/sessions'
+import { ConversationStore } from './brain/sessions'
 import { UsageStore } from './brain/usage'
 import { defaultConfig, loadConfig, readRawConfig, updateConfigFile, updateReposInFile, type AppConfig } from './config'
 import { defaultHomeDir, ensureHome, homePaths } from './home'
@@ -119,11 +128,13 @@ async function reload(): Promise<void> {
 }
 
 let busy = (): boolean => false
+let conversation = (): ConversationState => ({ id: '' })
 
 function status(): AppStatus {
   return {
     hasApiKey: Boolean(apiKey),
     busy: busy(),
+    conversation: conversation(),
     provider: config.provider,
     skin: config.skin,
     homeDir: home.root,
@@ -203,7 +214,10 @@ async function main(): Promise<void> {
   await ensureHome(home, examplesAgentsDir)
   await loadApiKey()
 
-  const sessions = new SessionStore(join(app.getPath('userData'), 'session.json'))
+  const sessions = new ConversationStore(
+    join(app.getPath('userData'), 'conversations'),
+    join(app.getPath('userData'), 'session.json')
+  )
   await sessions.load()
   const usage = new UsageStore(join(app.getPath('userData'), 'usage.json'))
   await usage.load()
@@ -226,11 +240,21 @@ async function main(): Promise<void> {
       thought: (event) => send('thought', event),
       delta: (text) => send('delta', text),
       message: (message) => send('message', message),
-      busy: (isBusy) => send('busy', isBusy),
+      busy: (isBusy) => {
+        send('busy', isBusy)
+        if (!isBusy) send('status', status())
+      },
       usage: (snapshot) => send('usage', snapshot)
     }
   )
   busy = () => brain.busy
+  conversation = () => brain.conversationState()
+  /** The run in progress, so switching conversation can wait for it to stop. */
+  let running: Promise<void> | undefined
+  const settle = async (): Promise<void> => {
+    brain.stop()
+    await running
+  }
 
   await reload()
   let reloadTimer: NodeJS.Timeout | undefined
@@ -302,8 +326,9 @@ async function main(): Promise<void> {
     if (provider === config.provider) return
     if (brain.busy) throw new Error('Espera a que el Cerebro termine antes de cambiar de proveedor.')
     await updateConfigFile(home.configFile, { provider })
-    // A conversation cannot move between providers.
-    await sessions.reset()
+    // A provider session cannot move to another provider: start a new
+    // conversation (the old one stays in the history and resumes with a summary).
+    await sessions.startNew()
     await usage.clearLimits()
     send('reset', null)
     send('usage', usage.snapshot())
@@ -314,14 +339,39 @@ async function main(): Promise<void> {
     if (!text && files.length === 0) return
     const paths = await Promise.all(files.map(receiveFile))
     // Not awaited: progress and the final answer arrive as events.
-    void brain.run(text || 'Revisa los archivos adjuntos.', paths).catch((err) => {
-      console.error('[cerebro]', err)
-    })
+    running = brain
+      .run(text || 'Revisa los archivos adjuntos.', paths)
+      .catch((err) => {
+        console.error('[cerebro]', err)
+      })
+      .finally(() => {
+        running = undefined
+      })
   })
   ipcMain.handle('brain:stop', () => brain.stop())
   ipcMain.handle('brain:new', async () => {
-    brain.stop()
-    await sessions.reset()
+    await settle()
+    await sessions.startNew()
+    send('status', status())
+  })
+  ipcMain.handle('conversations:list', (_e, query?: string) => sessions.list(String(query ?? '')))
+  ipcMain.handle('conversations:open', async (_e, id: string) => {
+    await settle()
+    if (!(await sessions.open(String(id)))) throw new Error('Esa conversación ya no existe.')
+    send('status', status())
+    return sessions.messages
+  })
+  ipcMain.handle('conversations:rename', async (_e, id: string, title: string) => {
+    await sessions.rename(String(id), String(title ?? ''))
+  })
+  ipcMain.handle('conversations:delete', async (_e, id: string) => {
+    if (String(id) === sessions.id) await settle()
+    await sessions.remove(String(id))
+    send('status', status())
+  })
+  ipcMain.handle('conversations:resume-mode', (_e, mode?: ResumeMode) => {
+    sessions.forcedMode = mode === 'full' || mode === 'summary' ? mode : undefined
+    send('status', status())
   })
   ipcMain.handle('apikey:set', (_e, key: string) => saveApiKey(String(key ?? '')))
   ipcMain.handle('permission:respond', (_e, id: string, allow: boolean) => gate.respond(id, allow === true))

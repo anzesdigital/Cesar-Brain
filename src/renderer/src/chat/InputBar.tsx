@@ -47,6 +47,38 @@ function saveHeight(value: number | undefined): void {
   }
 }
 
+/** How the next message will continue a conversation opened from the history. */
+function ResumeHint() {
+  const resume = useStore((s) => s.status?.conversation.resume)
+  const busy = useStore((s) => s.busy)
+  if (!resume || busy) return null
+  const mode = resume.forced ?? resume.auto
+  const other = mode === 'full' ? 'summary' : 'full'
+  const size = resume.tokens >= 1000 ? `~${Math.round(resume.tokens / 1000)}k tokens` : `~${resume.tokens} tokens`
+  return (
+    <p className="resume-hint">
+      {mode === 'full' ? (
+        <>
+          Se retomará con el <strong>contexto completo</strong> ({size}, se paga una vez).
+        </>
+      ) : (
+        <>
+          Se retomará con un <strong>resumen</strong> de los últimos mensajes (más barato).
+        </>
+      )}
+      {(other === 'summary' || resume.canFull) && (
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => void window.brain.setResumeMode(other === resume.auto ? undefined : other)}
+        >
+          {other === 'full' ? 'Usar contexto completo' : 'Usar resumen'}
+        </button>
+      )}
+    </p>
+  )
+}
+
 export function InputBar() {
   const busy = useStore((s) => s.busy)
   const [text, setText] = useState('')
@@ -199,6 +231,7 @@ export function InputBar() {
         </ul>
       )}
       {error && <p className="inputbar-error">{error}</p>}
+      <ResumeHint />
       <div className="inputbar-row">
         <button type="button" className="btn-ghost" onClick={() => picker.current?.click()} title="Adjuntar archivos">
           + Archivo
