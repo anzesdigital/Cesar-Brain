@@ -12,6 +12,8 @@ export interface HomePaths {
   mcpFile: string
   memoryFile: string
   agentsDir: string
+  /** One folder per automation, each with an automation.md. */
+  automationsDir: string
   workspaceDir: string
   inboxDir: string
   outputDir: string
@@ -30,6 +32,7 @@ export function homePaths(root: string): HomePaths {
     mcpFile: join(root, 'mcp.json'),
     memoryFile: join(root, 'memory.md'),
     agentsDir: join(root, 'agents'),
+    automationsDir: join(root, 'automations'),
     workspaceDir,
     inboxDir: join(workspaceDir, 'inbox'),
     outputDir: join(workspaceDir, 'output')
@@ -69,7 +72,7 @@ const DEFAULT_MEMORY = `<!-- Preferencias duraderas para el Cerebro. Escribe aqu
  */
 export async function ensureHome(paths: HomePaths, examplesAgentsDir: string): Promise<void> {
   const seed = !(await exists(paths.agentsDir))
-  await Promise.all([paths.inboxDir, paths.outputDir, paths.agentsDir].map((d) => mkdir(d, { recursive: true })))
+  await Promise.all([paths.inboxDir, paths.outputDir, paths.agentsDir, paths.automationsDir].map((d) => mkdir(d, { recursive: true })))
   if (seed && (await exists(examplesAgentsDir))) {
     await cp(examplesAgentsDir, paths.agentsDir, { recursive: true, errorOnExist: false, force: false })
   }

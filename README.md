@@ -12,6 +12,7 @@ Cerebro multi-agente de escritorio con oficina pixel art. Un Cerebro coordinador
 |---|---|
 | `brain/brain.md`: prompt del Cerebro | `config.json`: proveedor, tu nombre, modelos, aspecto |
 | `brain/agents/configurador`: agente que crea agentes | `agents/`: tus agentes |
+| `brain/agents/automatizador`: agente que crea automatizaciones | `automations/`: tus automatizaciones |
 | `examples/`: agentes y configuraciones de ejemplo | `mcp.json`: servidores MCP |
 | `src/`: la app | `memory.md`: preferencias duraderas para el Cerebro |
 | | `workspace/inbox` y `workspace/output`: archivos |
@@ -47,6 +48,7 @@ Una de estas:
 
 - Escribe o suelta archivos; el Cerebro delega.
 - «Crea un agente que…» → lo hace el configurador.
+- Tareas que corren solas: «crea una automatización que haga pull de main en api cada hora». Rob la escribe, tú la apruebas en **Automatizaciones** y aparece como un robot en el Taller. Ver [docs/AUTOMATIZACIONES.md](docs/AUTOMATIZACIONES.md).
 - Decisiones difíciles: di «consejo: …» (o «debate esto», «pon a prueba esto») y cinco asesores con miradas opuestas opinan, se revisan entre ellos a ciegas y un presidente da el veredicto. Si el Cerebro ve una decisión con mucho en juego, te ofrece el consejo con un botón. Método [LLM Council](https://github.com/karpathy/llm-council) de Andrej Karpathy, adaptado del skill de [Ole Lehmann](https://github.com/aiwithremy/claude-skills-llm-council).
 - Oficina: cada agente se sienta en la sala de su `zona`. Zoom con los botones o Ctrl + rueda (pellizco en táctil), arrastra el suelo para moverte, doble clic para ver todo. En ventanas estrechas, pestañas Oficina / Chat.
 - Ajustes muestra el proveedor, la sesión, las carpetas y cualquier `agent.md` o `mcp.json` con errores.

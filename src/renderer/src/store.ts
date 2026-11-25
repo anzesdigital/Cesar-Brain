@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   AgentInfo,
   AppStatus,
+  AutomationInfo,
   ChatMessage,
   PermissionRequest,
   ThoughtEvent,
@@ -21,6 +22,13 @@ interface State {
   selectedAgent?: string
   status?: AppStatus
   usage?: UsageSnapshot
+  automations: AutomationInfo[]
+  /** Automations panel open; `automationFocus` is the one shown. */
+  automationsOpen: boolean
+  automationFocus?: string
+  setAutomations(list: AutomationInfo[]): void
+  openAutomations(id?: string): void
+  closeAutomations(): void
   setUsage(usage: UsageSnapshot): void
   setAgents(agents: AgentInfo[]): void
   addThought(thought: ThoughtEvent): void
@@ -45,6 +53,11 @@ export const useStore = create<State>((set) => ({
   streamText: '',
   busy: false,
   permissions: [],
+  automations: [],
+  automationsOpen: false,
+  setAutomations: (automations) => set({ automations }),
+  openAutomations: (automationFocus) => set((s) => ({ automationsOpen: true, automationFocus: automationFocus ?? s.automationFocus })),
+  closeAutomations: () => set({ automationsOpen: false }),
   setAgents: (agents) => set({ agents }),
   addThought: (thought) =>
     set((s) => {

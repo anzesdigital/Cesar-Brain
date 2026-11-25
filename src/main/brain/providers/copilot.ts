@@ -14,7 +14,14 @@ import type { AgentRecord } from '../registry'
 import { addCount, emptyCount } from '../usage'
 import { fromCopilotTool, permissionToCanonical, toCopilotTools, type CopilotPermission } from './toolmap'
 import { withHistory } from '../resume'
-import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
+import {
+  denialMessage,
+  type AgentRunRequest,
+  type BrainProvider,
+  type RunRequest,
+  type RunResult,
+  type RunSink
+} from './types'
 
 const QUOTA_TIMEOUT_MS = 5000
 
@@ -85,7 +92,9 @@ export class CopilotTranslator {
 
   constructor(
     private agentIds: ReadonlySet<string>,
-    private sink: RunSink
+    private sink: RunSink,
+    /** Who speaks on the main session: the brain, or the agent of a solo run. */
+    private root: string = BRAIN_ID
   ) {}
 
   totals(): Record<string, TokenCount> {
@@ -93,7 +102,7 @@ export class CopilotTranslator {
   }
 
   ownerOf(toolCallId: string | undefined): string {
-    return (toolCallId && this.toolOwners.get(toolCallId)) || BRAIN_ID
+    return (toolCallId && this.toolOwners.get(toolCallId)) || this.root
   }
 
   /**
@@ -102,7 +111,7 @@ export class CopilotTranslator {
    * delegation not yet matched).
    */
   private speaker(instance: string | undefined): string {
-    if (!instance) return BRAIN_ID
+    if (!instance || this.root !== BRAIN_ID) return this.root
     const known = this.instances.get(instance)
     if (known) return known
     let callId: string | undefined = this.jobs.has(instance) ? instance : undefined
@@ -130,7 +139,7 @@ export class CopilotTranslator {
     const d = (event.data ?? {}) as Data
     switch (event.type) {
       case 'assistant.message_delta': {
-        if (event.agentId) return
+        if (event.agentId || this.root !== BRAIN_ID) return
         const id = str(d.messageId)
         if (id !== this.streamId) {
           this.streamId = id
@@ -143,8 +152,12 @@ export class CopilotTranslator {
       case 'assistant.message': {
         const content = str(d.content).trim()
         if (!content) return
-        if (event.agentId) this.sink.agentText(this.speaker(event.agentId), content)
-        else this.finalText = content
+        if (event.agentId && this.root === BRAIN_ID) {
+          this.sink.agentText(this.speaker(event.agentId), content)
+          return
+        }
+        this.finalText = content
+        if (this.root !== BRAIN_ID) this.sink.agentText(this.root, content)
         return
       }
       case 'tool.execution_start': {
@@ -152,7 +165,7 @@ export class CopilotTranslator {
         const callId = str(d.toolCallId)
         const args = (d.arguments && typeof d.arguments === 'object' ? d.arguments : {}) as Data
         this.toolOwners.set(callId, speaker)
-        if (str(d.toolName) === 'task' && speaker === BRAIN_ID) {
+        if (str(d.toolName) === 'task' && speaker === BRAIN_ID && this.root === BRAIN_ID) {
           const target = str(args.agent_type)
           if (this.agentIds.has(target)) {
             this.startJob(callId, target, str(args.description))
@@ -268,8 +281,25 @@ export class CopilotProvider implements BrainProvider {
     }
   }
 
-  async run(req: RunRequest, sink: RunSink): Promise<RunResult> {
-    const translator = new CopilotTranslator(new Set(req.agents.map((a) => a.info.id)), sink)
+  run(req: RunRequest, sink: RunSink): Promise<RunResult> {
+    return this.execute(req, sink)
+  }
+
+  runAgent(req: AgentRunRequest, sink: RunSink): Promise<RunResult> {
+    const run: RunRequest = {
+      prompt: req.prompt,
+      systemPrompt: '',
+      agents: [],
+      mcp: { ...req.mcp, servers: Object.fromEntries(Object.entries(req.mcp.servers).filter(([n]) => req.agent.spec.mcp.includes(n))) },
+      config: req.config,
+      workspaceDir: req.workspaceDir,
+      signal: req.signal
+    }
+    return this.execute(run, sink, req.agent)
+  }
+
+  private async execute(req: RunRequest, sink: RunSink, solo?: AgentRecord): Promise<RunResult> {
+    const translator = new CopilotTranslator(new Set(req.agents.map((a) => a.info.id)), sink, solo?.info.id)
     let session: CopilotSession | undefined
     let text = ''
     let failed = false
@@ -288,16 +318,35 @@ export class CopilotProvider implements BrainProvider {
         enableConfigDiscovery: false,
         // Code repos from config.json; the permission policy decides what each agent may do there.
         filesystem: { additionalDirectories: req.config.repos.map((r) => r.path) },
-        systemMessage: { mode: 'append', content: req.systemPrompt },
-        agents: {
-          definitions: req.agents.map((a) => toCopilotAgent(a, resolveModel(req.config, 'copilot', a.spec.model))),
-          includedBuiltinAgents: []
-        },
+        agents: solo
+          ? {
+              // The agent itself is the session: its prompt, tools and model.
+              definitions: [toCopilotAgent(solo, resolveModel(req.config, 'copilot', solo.spec.model))],
+              selected: solo.info.id,
+              includedBuiltinAgents: []
+            }
+          : {
+              definitions: req.agents.map((a) => toCopilotAgent(a, resolveModel(req.config, 'copilot', a.spec.model))),
+              includedBuiltinAgents: []
+            },
         mcp: { servers: Object.fromEntries(Object.entries(req.mcp.servers).map(([n, s]) => [n, toCopilotMcp(s)])) },
         permissions: { onRequest },
         events: { streaming: true, onEvent: (event) => translator.handle(event as CopilotEvent) }
       }
-      const model = req.config.models.copilot.brain
+      if (!solo) options.systemMessage = { mode: 'append', content: req.systemPrompt }
+      if (!solo && sink.beforeDelegation) {
+        const before = sink.beforeDelegation.bind(sink)
+        const ids = new Set(req.agents.map((a) => a.info.id))
+        // Automations that must run before an agent gets a job (e.g. git pull).
+        options.hooks = {
+          handlers: {
+            onSubagentStart: async (input) => {
+              if (ids.has(input.agentName)) await before(input.agentName)
+            }
+          }
+        }
+      }
+      const model = (solo && resolveModel(req.config, 'copilot', solo.spec.model)) || req.config.models.copilot.brain
       if (model) options.model = model
 
       let prompt = req.resumeId ? req.prompt : withHistory(req.prompt, req.history)

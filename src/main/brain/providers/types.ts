@@ -22,6 +22,17 @@ export interface RunRequest {
   signal: AbortSignal
 }
 
+/** Runs one agent on its own, without the brain (automation steps). */
+export interface AgentRunRequest {
+  agent: AgentRecord
+  /** The task for the agent. */
+  prompt: string
+  mcp: McpCatalog
+  config: AppConfig
+  workspaceDir: string
+  signal: AbortSignal
+}
+
 /**
  * What a provider reports while it runs. Tool names are canonical
  * (Read, Write, Bash, mcp__srv__tool…) whatever the provider calls them.
@@ -46,6 +57,8 @@ export interface RunSink {
    * true = go ahead; false = the user said no; a string = refused, with the reason for the agent.
    */
   authorize(agentId: string, tool: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<boolean | string>
+  /** Called before the brain hands a job to an agent; the job waits for it (automations). */
+  beforeDelegation?(agentId: string): Promise<void>
 }
 
 export interface RunResult {
@@ -67,6 +80,8 @@ export interface BrainProvider {
   /** Fills {{DELEGATION}} in brain.md: how to hand work to an agent and which model to ask for. */
   delegationText(config: AppConfig): string
   run(req: RunRequest, sink: RunSink): Promise<RunResult>
+  /** Runs `req.agent` as the main session: its prompt, tools, MCP servers and model; no delegation. */
+  runAgent(req: AgentRunRequest, sink: RunSink): Promise<RunResult>
   auth(): Promise<ProviderAuth>
   dispose?(): Promise<void>
 }

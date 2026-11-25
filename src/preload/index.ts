@@ -10,6 +10,14 @@ function on<T>(channel: string) {
 }
 
 const api: BrainApi = {
+  getAutomations: () => ipcRenderer.invoke('automations:get'),
+  onAutomations: on('automations'),
+  getAutomationRuns: (id) => ipcRenderer.invoke('automations:runs', id),
+  onAutomationRun: on('automation-run'),
+  approveAutomation: (id) => ipcRenderer.invoke('automations:approve', id),
+  setAutomationEnabled: (id, enabled) => ipcRenderer.invoke('automations:enabled', id, enabled),
+  runAutomation: (id) => ipcRenderer.invoke('automations:run', id),
+  stopAutomation: (id) => ipcRenderer.invoke('automations:stop', id),
   getAgents: () => ipcRenderer.invoke('agents:get'),
   getHistory: () => ipcRenderer.invoke('history:get'),
   getStatus: () => ipcRenderer.invoke('status:get'),

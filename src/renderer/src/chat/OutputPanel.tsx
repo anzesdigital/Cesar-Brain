@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import { parseOptions, type ChoiceOption } from '@shared/options'
 import { PROVIDERS, type ChatMessage } from '@shared/types'
 import { useStore } from '../store'
+import { useAutomationErrors } from '../automations/AutomationsPanel'
 import { UsageButton } from '../usage/UsagePanel'
 import { HistoryPanel } from './HistoryPanel'
 
@@ -166,6 +167,28 @@ function BrainMessage({ message, live, reply }: { message: ChatMessage; live: bo
   )
 }
 
+/** Opens the automations panel; shows when one runs or waits for approval. */
+function AutomationsButton() {
+  const list = useStore((s) => s.automations)
+  const open = useStore((s) => s.openAutomations)
+  const running = list.filter((a) => a.running).length
+  const pending = list.filter((a) => a.needsApproval).length
+  const broken = useAutomationErrors().length
+  const title = running
+    ? `${running} en marcha`
+    : broken
+      ? `${broken} no se pueden leer`
+      : pending
+      ? `${pending} por revisar y aprobar`
+      : 'Tareas que corren solas'
+  return (
+    <button type="button" className="btn-ghost" onClick={() => open()} title={title}>
+      Automatizaciones
+      {running > 0 ? <span className="auto-dot auto-dot-run" aria-hidden="true" /> : pending + broken > 0 ? ' ⚠' : ''}
+    </button>
+  )
+}
+
 export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; onUsage: () => void }) {
   const messages = useStore((s) => s.messages)
   const streamText = useStore((s) => s.streamText)
@@ -217,6 +240,7 @@ export function OutputPanel({ onSettings, onUsage }: { onSettings: () => void; o
           >
             Historial
           </button>
+          <AutomationsButton />
           <UsageButton onClick={onUsage} />
           <button
             type="button"

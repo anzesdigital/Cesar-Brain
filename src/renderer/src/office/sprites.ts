@@ -34,6 +34,23 @@ const BRAIN = [
   ...PERSON.slice(4)
 ]
 
+/** Automation robot: R body · V visor · E eye light · A antenna · G joints. */
+const ROBOT = [
+  '.......AA.......',
+  '.......GG.......',
+  '....RRRRRRRR....',
+  '...RRRRRRRRRR...',
+  '...RVVVVVVVVR...',
+  '...RVEEVVEEVR...',
+  '...RVVVVVVVVR...',
+  '....RRRRRRRR....',
+  '......GGGG......',
+  '..RRRRRRRRRRRR..',
+  '.GRRRLLLLLLRRRG.',
+  '.GRRRLLLLLLRRRG.',
+  ...PERSON.slice(12)
+]
+
 export const BRAIN_SPRITE: SpriteSpec = { hair: '#f29ac0', shirt: '#6b4fd8', skin: '#f2c9a0' }
 
 /** Color from a CSS variable on <html> (set by the skin), or the classic one. */
@@ -63,6 +80,30 @@ export function drawSprite(canvas: HTMLCanvasElement, spec: SpriteSpec, isBrain:
   const palette = colors(spec, isBrain)
   ctx.clearRect(0, 0, SPRITE_SIZE, SPRITE_SIZE)
   grid.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const color = palette[row[x]]
+      if (!color) continue
+      ctx.fillStyle = color
+      ctx.fillRect(x, y, 1, 1)
+    }
+  })
+}
+
+export function drawRobot(canvas: HTMLCanvasElement, body: string, lit: boolean): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const palette: Record<string, string> = {
+    R: body,
+    V: skinColor('--sprite-eye', '#1b1c2b'),
+    E: lit ? '#7cf5c8' : '#3d5a66',
+    A: lit ? '#ffcf5a' : '#7b86b8',
+    G: '#8f98b8',
+    L: skinColor('--sprite-laptop', '#c9d3e6'),
+    D: skinColor('--sprite-desk', '#8a5a3b'),
+    d: skinColor('--sprite-desk-leg', '#5e3c27')
+  }
+  ctx.clearRect(0, 0, SPRITE_SIZE, SPRITE_SIZE)
+  ROBOT.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {
       const color = palette[row[x]]
       if (!color) continue

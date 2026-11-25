@@ -6,6 +6,7 @@ import {
   type AgentDefinition,
   type McpServerConfig,
   type Options,
+  type PreToolUseHookInput,
   type Query,
   type SDKMessage
 } from '@anthropic-ai/claude-agent-sdk'
@@ -16,7 +17,14 @@ import type { McpServer } from '../../mcp'
 import type { AgentRecord } from '../registry'
 import { limitsFromPlan, RunMeter, type ApiUsage, type PlanUsage } from '../usage'
 import { withHistory } from '../resume'
-import { denialMessage, type BrainProvider, type RunRequest, type RunResult, type RunSink } from './types'
+import {
+  denialMessage,
+  type AgentRunRequest,
+  type BrainProvider,
+  type RunRequest,
+  type RunResult,
+  type RunSink
+} from './types'
 
 const DELEGATION_TOOLS = new Set(['Agent', 'Task'])
 /** Values the Agent tool's `model` field accepts. */
@@ -69,11 +77,18 @@ class ClaudeRun {
   private sessionId?: string
   private cost?: number
 
+  /** Who speaks on the main stream: the brain, or the agent of a solo run. */
+  private root: string
+
   constructor(
     private req: RunRequest,
     private sink: RunSink,
-    private apiKey: string | undefined
-  ) {}
+    private apiKey: string | undefined,
+    /** Runs this agent alone as the main session (automations). */
+    private solo?: AgentRecord
+  ) {
+    this.root = solo?.info.id ?? BRAIN_ID
+  }
 
   async execute(): Promise<RunResult> {
     const abort = new AbortController()
@@ -127,7 +142,7 @@ class ClaudeRun {
       forwardSubagentText: true,
       env,
       canUseTool: async (toolName, input, ctx) => {
-        const agentId = this.toolOwners.get(ctx.toolUseID) ?? BRAIN_ID
+        const agentId = this.toolOwners.get(ctx.toolUseID) ?? this.root
         const result = await this.sink.authorize(agentId, toolName, input, ctx.signal)
         return result === true
           ? { behavior: 'allow', updatedInput: input }
@@ -137,7 +152,44 @@ class ClaudeRun {
     const model = req.config.models.claude.brain
     if (model) options.model = model
     if (req.resumeId) options.resume = req.resumeId
+    if (this.solo) this.soloOptions(options, this.solo)
+    else if (this.sink.beforeDelegation) {
+      const before = this.sink.beforeDelegation.bind(this.sink)
+      // Automations that must run before an agent gets a job (e.g. git pull).
+      options.hooks = {
+        PreToolUse: [
+          {
+            matcher: 'Agent|Task',
+            timeout: 900,
+            hooks: [
+              async (input) => {
+                const target = (input as PreToolUseHookInput).tool_input as { subagent_type?: unknown }
+                const agentId = String(target?.subagent_type ?? '')
+                if (req.agents.some((a) => a.info.id === agentId)) await before(agentId)
+                return { continue: true }
+              }
+            ]
+          }
+        ]
+      }
+    }
     return options
+  }
+
+  /** One agent as the whole session: its prompt, tools, servers and model, and no sub-agents. */
+  private soloOptions(options: Options, agent: AgentRecord): void {
+    const definition = toClaudeAgent(agent, resolveModel(this.req.config, 'claude', agent.spec.model))
+    options.systemPrompt = agent.spec.prompt
+    delete options.agents
+    options.mcpServers = Object.fromEntries(
+      Object.entries(this.req.mcp.servers)
+        .filter(([name]) => agent.spec.mcp.includes(name))
+        .map(([name, s]) => [name, toClaudeMcp(s)])
+    )
+    if (definition.tools) options.tools = definition.tools.filter((t) => !t.startsWith('mcp__'))
+    options.allowedTools = (options.allowedTools ?? []).filter((t) => t !== 'Agent')
+    options.disallowedTools = ['Agent', 'Task']
+    if (definition.model) options.model = definition.model
   }
 
   private async handle(msg: SDKMessage): Promise<{ text: string; failed: boolean } | undefined> {
@@ -209,7 +261,10 @@ class ClaudeRun {
         // Last chance to read the plan limits while the session is still open.
         await this.refreshLimits()
         if (msg.subtype === 'success') return { text: msg.result, failed: msg.is_error }
-        return { text: `El Cerebro no pudo terminar (${msg.subtype}).`, failed: true }
+        return {
+          text: `${this.solo ? this.solo.info.name : 'El Cerebro'} no pudo terminar (${msg.subtype}).`,
+          failed: true
+        }
 
       default:
         return undefined
@@ -217,7 +272,7 @@ class ClaudeRun {
   }
 
   private speakerOf(parentToolUseId: string | null | undefined): string {
-    return parentToolUseId ? (this.jobs.get(parentToolUseId) ?? BRAIN_ID) : BRAIN_ID
+    return parentToolUseId ? (this.jobs.get(parentToolUseId) ?? this.root) : this.root
   }
 
   private onToolUse(speaker: string, block: ToolUseBlock): void {
@@ -274,6 +329,19 @@ export class ClaudeProvider implements BrainProvider {
     if (!lost) return first
     const retry = await new ClaudeRun(fresh, sink, this.getApiKey()).execute()
     return { ...retry, resumeLost: true }
+  }
+
+  async runAgent(req: AgentRunRequest, sink: RunSink): Promise<RunResult> {
+    const run: RunRequest = {
+      prompt: req.prompt,
+      systemPrompt: req.agent.spec.prompt,
+      agents: [],
+      mcp: req.mcp,
+      config: req.config,
+      workspaceDir: req.workspaceDir,
+      signal: req.signal
+    }
+    return new ClaudeRun(run, sink, this.getApiKey(), req.agent).execute()
   }
 
   async auth(): Promise<ProviderAuth> {

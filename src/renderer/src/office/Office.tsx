@@ -9,10 +9,20 @@ import {
   type CSSProperties,
   type PointerEvent
 } from 'react'
-import { BRAIN_ID, type AgentInfo, type AgentState, type SpriteSpec } from '@shared/types'
+import {
+  AUTOMATION_PREFIX,
+  BRAIN_ID,
+  robotId,
+  type AgentInfo,
+  type AgentState,
+  type AutomationInfo,
+  type SpriteSpec
+} from '@shared/types'
+import { useAutomationErrors } from '../automations/AutomationsPanel'
+import { AutomationActions, statusLine, useNow } from '../automations/controls'
 import { useStore } from '../store'
 import { Bubble } from './Bubble'
-import { BRAIN_SPRITE, drawSprite, SPRITE_SIZE } from './sprites'
+import { BRAIN_SPRITE, drawRobot, drawSprite, SPRITE_SIZE } from './sprites'
 import { BRAIN_ZONE, fitView, groupZones, zoneKey, zoomAt, type View } from './zones'
 
 const BRAIN_INFO: AgentInfo = {
@@ -25,6 +35,9 @@ const BRAIN_INFO: AgentInfo = {
 }
 
 const ZOOM_STEP = 1.25
+/** Room where the automation robots work. */
+const WORKSHOP = 'Taller'
+const WORKSHOP_COLOR = '#8f98b8'
 /** Height kept clear for the zoom buttons when fitting. */
 const ZOOM_BAR = 44
 
@@ -67,6 +80,91 @@ function Person({ agent, register }: { agent: AgentInfo; register: (id: string, 
       </button>
       {!isBrain && <AgentToggle agent={agent} compact />}
     </div>
+  )
+}
+
+function RobotSprite({ color, lit }: { color: string; lit: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const skin = useStore((s) => s.status?.skin)
+  useEffect(() => {
+    if (ref.current) drawRobot(ref.current, color, lit)
+  }, [color, lit, skin])
+  return <canvas ref={ref} width={SPRITE_SIZE} height={SPRITE_SIZE} className="sprite" />
+}
+
+/** An automation, drawn as a robot at its desk. */
+function Robot({ automation }: { automation: AutomationInfo }) {
+  const id = robotId(automation.id)
+  const thought = useStore((s) => s.thoughts[id])
+  const selected = useStore((s) => s.selectedAgent === id)
+  const select = useStore((s) => s.select)
+  const now = useNow()
+  const state: AgentState = thought?.state ?? 'idle'
+  const off = !automation.enabled || automation.needsApproval
+  return (
+    <div className={`person-slot${state === 'idle' ? '' : ' person-slot-active'}`}>
+      <button
+        type="button"
+        className={`person person-${state} person-robot${selected ? ' person-selected' : ''}${off ? ' person-off' : ''}`}
+        onClick={() => select(selected ? undefined : id)}
+        title={`${automation.name} (automatización)
+${statusLine(automation, now)}${automation.description ? `
+${automation.description}` : ''}`}
+      >
+        <Bubble text={thought?.text ?? ''} state={state} />
+        <span className="person-body">
+          <RobotSprite color={automation.color} lit={automation.running || state !== 'idle'} />
+        </span>
+        <span className="nameplate">
+          {automation.name}
+          {automation.needsApproval && ' ⚠'}
+        </span>
+      </button>
+    </div>
+  )
+}
+
+function RobotJournal({ id }: { id: string }) {
+  const automation = useStore((s) => s.automations.find((a) => robotId(a.id) === id))
+  const history = useStore((s) => s.history[id])
+  const select = useStore((s) => s.select)
+  const open = useStore((s) => s.openAutomations)
+  const now = useNow()
+  if (!automation) return null
+  return (
+    <aside className="journal">
+      <header>
+        <strong>
+          {automation.name}
+          <em> · Automatización</em>
+        </strong>
+        <button type="button" onClick={() => select(undefined)} aria-label="Cerrar bitácora">
+          ×
+        </button>
+      </header>
+      {automation.description && <p className="journal-desc">{automation.description}</p>}
+      <p className="journal-desc">
+        {statusLine(automation, now)} · {automation.triggers.join(' · ')}
+      </p>
+      <AutomationActions automation={automation} onReview={() => open(automation.id)} />
+      <button type="button" className="btn-ghost journal-more" onClick={() => open(automation.id)}>
+        Ajustes e historial
+      </button>
+      {history?.length ? (
+        <ol>
+          {[...history].reverse().map((t) => (
+            <li key={t.ts + t.text}>
+              <time>
+                {new Date(t.ts).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </time>
+              {t.text}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="journal-empty">No ha trabajado en esta sesión.</p>
+      )}
+    </aside>
   )
 }
 
@@ -128,6 +226,7 @@ function Journal() {
   const history = useStore((s) => (selectedId ? s.history[selectedId] : undefined))
   const select = useStore((s) => s.select)
   if (!selectedId) return null
+  if (selectedId.startsWith(AUTOMATION_PREFIX)) return <RobotJournal id={selectedId} />
   const agent = selectedId === BRAIN_ID ? BRAIN_INFO : agents.find((a) => a.id === selectedId)
   if (!agent) return null
 
@@ -208,7 +307,11 @@ export function Office() {
   const agents = useStore((s) => s.agents)
   const thoughts = useStore((s) => s.thoughts)
   const status = useStore((s) => s.status)
+  const automations = useStore((s) => s.automations)
+  const automationErrors = useAutomationErrors()
+  const openAutomations = useStore((s) => s.openAutomations)
   const zones = useMemo(() => groupZones(agents), [agents])
+  const workshopActive = automations.some((a) => (thoughts[robotId(a.id)]?.state ?? 'idle') !== 'idle')
 
   const viewport = useRef<HTMLElement>(null)
   const world = useRef<HTMLDivElement>(null)
@@ -252,7 +355,7 @@ export function Office() {
     setSpots(next)
   }, [])
 
-  useLayoutEffect(measure, [zones, measure])
+  useLayoutEffect(measure, [zones, automations.length, automationErrors.length, measure])
 
   useEffect(() => {
     const observer = new ResizeObserver(measure)
@@ -369,6 +472,28 @@ export function Office() {
             </Fragment>
           )
         })}
+
+        {(automations.length > 0 || automationErrors.length > 0) && (
+          <div
+            className={`room room-workshop${workshopActive ? ' room-active' : ''}`}
+            style={{ '--room': WORKSHOP_COLOR, '--cols': Math.min(4, Math.max(2, automations.length)) } as CSSProperties}
+          >
+            <header className="room-label">
+              {WORKSHOP}
+              <span>{automations.length}</span>
+            </header>
+            <div className="room-floor">
+              {automations.map((a) => (
+                <Robot key={a.id} automation={a} />
+              ))}
+            </div>
+            {automationErrors.length > 0 && (
+              <button type="button" className="btn-ghost room-broken" onClick={() => openAutomations()}>
+                ⚠ {automationErrors.length} sin leer
+              </button>
+            )}
+          </div>
+        )}
 
         {brainSpot && (
           <svg

@@ -41,6 +41,8 @@ export interface BrainConfig {
   getConfig(): AppConfig
   getProvider(): BrainProvider
   usage: UsageStore
+  /** Automations to run (and wait for) before an agent gets a job. */
+  beforeDelegation?(agentId: string): Promise<void>
 }
 
 const IDLE_DELAY_MS = 3000
@@ -208,7 +210,9 @@ export class BrainOrchestrator {
   }
 
   private sink(providerId: BrainProvider['id']): RunSink {
+    const before = this.config.beforeDelegation
     return {
+      ...(before ? { beforeDelegation: (agentId: string) => before(agentId) } : {}),
       sessionId: (id) => void this.sessions.setSessionId(providerId, id),
       textDelta: (text) => this.events.delta(text),
       agentText: (agentId, text) => {

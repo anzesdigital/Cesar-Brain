@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
 import {
   SKINS,
+  type AgentState,
   type AppStatus,
   type ConversationState,
   type IncomingFile,
@@ -26,6 +27,9 @@ import { defaultConfig, loadConfig, readRawConfig, updateConfigFile, updateRepos
 import { defaultHomeDir, ensureHome, homePaths } from './home'
 import { emptyCatalog, loadMcp, type McpCatalog } from './mcp'
 import { agentReposText, REPO_NAME_RE, reposFor, usesFiles } from './repos'
+import { runAutomation } from './automations/runner'
+import { AutomationManager, type Watcher } from './automations/scheduler'
+import { loadAutomations } from './automations/spec'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -48,6 +52,7 @@ let config: AppConfig = defaultConfig()
 let problems: string[] = []
 let repoStatus: RepoStatus[] = []
 let apiKey: string | undefined
+let automations: AutomationManager | undefined
 
 const providers: Record<ProviderId, BrainProvider> = {
   claude: new ClaudeProvider(() => apiKey),
@@ -86,6 +91,7 @@ async function reload(): Promise<void> {
       MCP_FILE: home.mcpFile,
       TOOLS: CANONICAL_TOOLS.join(', '),
       USER: config.userName || 'el usuario',
+      AUTOMATIONS_DIR: home.automationsDir,
       REPOS: config.repos.length ? config.repos.map((r) => r.name).join(', ') : '(ninguno; se añaden en Ajustes)'
     },
     sharedRules
@@ -114,11 +120,19 @@ async function reload(): Promise<void> {
   )
   for (const r of repoStatus) if (!r.exists) repoProblems.push(`repo "${r.name}": no existe la carpeta ${r.path}`)
 
+  const autoLoad = await loadAutomations(home.automationsDir, {
+    agentIds: new Set(agents.map((a) => a.info.id)),
+    repoNames,
+    vars: { USER: config.userName || 'el usuario' }
+  })
+  automations?.setSpecs(autoLoad.automations)
+
   problems = [
     ...(loaded.error ? [loaded.error] : []),
     ...(loaded.warnings ?? []),
     ...mcp.errors,
     ...result.errors,
+    ...autoLoad.errors,
     ...repoProblems,
     ...providerWarnings()
   ]
@@ -140,6 +154,7 @@ function status(): AppStatus {
     homeDir: home.root,
     workspaceDir: home.workspaceDir,
     agentsDir: home.agentsDir,
+    automationsDir: home.automationsDir,
     problems,
     repos: repoStatus
   }
@@ -222,17 +237,81 @@ async function main(): Promise<void> {
   const usage = new UsageStore(join(app.getPath('userData'), 'usage.json'))
   await usage.load()
   const gate = new PermissionGate((request) => send('permission', request))
+
+  // Bubbles of robots and of agents working for an automation; they go idle by themselves.
+  const idleTimers = new Map<string, NodeJS.Timeout>()
+  const think = (agentId: string, state: AgentState, text: string): void => {
+    clearTimeout(idleTimers.get(agentId))
+    idleTimers.delete(agentId)
+    send('thought', { agentId, state, text, ts: Date.now() })
+    if (state === 'done' || state === 'error') {
+      idleTimers.set(
+        agentId,
+        setTimeout(() => send('thought', { agentId, state: 'idle', text: '', ts: Date.now() }), 4000)
+      )
+    }
+  }
+  const watchFolder: Watcher = (spec, onChange) => {
+    const target = spec.watch?.repo
+      ? config.repos.find((r) => r.name === spec.watch?.repo)?.path
+      : spec.watch?.folder
+        ? join(home.workspaceDir, spec.watch.folder)
+        : undefined
+    if (!target) return undefined
+    const watcher = chokidar
+      .watch(target, {
+        ignoreInitial: true,
+        depth: 5,
+        ignored: (path: string) => /[\\/](\.git|node_modules)([\\/]|$)/.test(path)
+      })
+      .on('all', (_event, file) => onChange(file))
+    return () => void watcher.close()
+  }
+  automations = new AutomationManager({
+    stateFile: join(app.getPath('userData'), 'automations.json'),
+    runsDir: join(app.getPath('userData'), 'automation-runs'),
+    watch: watchFolder,
+    events: {
+      changed: (list) => send('automations', list),
+      run: (run) => send('automation-run', run),
+      think: (id, state, text) => think(id, state, text)
+    },
+    execute: (spec, trigger, detail, signal, progress) =>
+      runAutomation(
+        spec,
+        trigger,
+        detail,
+        {
+          workspaceDir: home.workspaceDir,
+          readableDirs: [home.agentsDir, builtinAgentsDir, home.automationsDir],
+          getConfig: () => config,
+          getAgents: () => agents,
+          getMcp: () => mcp,
+          getProvider: () => providers[config.provider],
+          think,
+          progress,
+          recordUsage: async (tokens, result) => {
+            await usage.recordRun(tokens, result.sessionId, result.sessionCostUsd, false, result.premiumRequests)
+            send('usage', usage.snapshot())
+          }
+        },
+        signal
+      )
+  })
+  await automations.load()
+  const manager = automations
   const brain = new BrainOrchestrator(
     {
       workspaceDir: home.workspaceDir,
       brainPromptFile: join(brainDir, 'brain.md'),
       memoryFile: home.memoryFile,
-      readableDirs: [home.agentsDir, builtinAgentsDir],
+      readableDirs: [home.agentsDir, builtinAgentsDir, home.automationsDir],
       getAgents: () => agents,
       getMcp: () => mcp,
       getConfig: () => config,
       getProvider: () => providers[config.provider],
-      usage
+      usage,
+      beforeDelegation: (agentId) => manager.beforeDelegation(agentId)
     },
     sessions,
     gate,
@@ -259,7 +338,7 @@ async function main(): Promise<void> {
   await reload()
   let reloadTimer: NodeJS.Timeout | undefined
   chokidar
-    .watch([home.agentsDir, home.configFile, home.mcpFile, builtinAgentsDir, join(brainDir, 'estilo.md')], {
+    .watch([home.agentsDir, home.automationsDir, home.configFile, home.mcpFile, builtinAgentsDir, join(brainDir, 'estilo.md')], {
       ignoreInitial: true,
       depth: 2
     })
@@ -269,6 +348,12 @@ async function main(): Promise<void> {
     })
 
   ipcMain.handle('agents:get', () => agents.map((a) => a.info))
+  ipcMain.handle('automations:get', () => manager.list())
+  ipcMain.handle('automations:runs', (_e, id: string) => manager.runs(String(id)))
+  ipcMain.handle('automations:approve', (_e, id: string) => manager.approve(String(id)))
+  ipcMain.handle('automations:enabled', (_e, id: string, enabled: boolean) => manager.setEnabled(String(id), enabled === true))
+  ipcMain.handle('automations:run', (_e, id: string) => manager.runNow(String(id)))
+  ipcMain.handle('automations:stop', (_e, id: string) => manager.stop(String(id)))
   ipcMain.handle('history:get', () => sessions.messages)
   ipcMain.handle('usage:get', () => usage.snapshot())
   ipcMain.handle('status:get', () => status())
@@ -391,6 +476,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  automations?.dispose()
   void Promise.all(Object.values(providers).map((p) => p.dispose?.()))
 })
 

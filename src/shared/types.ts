@@ -128,6 +128,7 @@ export interface AppStatus {
   homeDir: string
   workspaceDir: string
   agentsDir: string
+  automationsDir: string
   /** Problems found while reading config.json, mcp.json or agent files. */
   problems: string[]
   repos: RepoStatus[]
@@ -175,7 +176,81 @@ export interface UsageSnapshot {
   limitsProvider?: ProviderId
 }
 
+/** Thought ids of automation robots in the office: `auto:<id>`. */
+export const AUTOMATION_PREFIX = 'auto:'
+
+export function robotId(automationId: string): string {
+  return `${AUTOMATION_PREFIX}${automationId}`
+}
+
+/** What started an automation run. */
+export type AutomationTrigger = 'intervalo' | 'manual' | 'arranque' | 'archivos' | 'agente'
+
+export interface AutomationStepInfo {
+  kind: 'comando' | 'agente'
+  name: string
+  /** Command line, or the agent's task. */
+  detail: string
+  /** Repo or folder a command runs in; agent id for agent steps. */
+  where: string
+}
+
+/** One automation, as the UI shows it. */
+export interface AutomationInfo {
+  id: string
+  name: string
+  description: string
+  /** Human-readable triggers ("cada 30 min", "al arrancar"…). */
+  triggers: string[]
+  steps: AutomationStepInfo[]
+  /** Tools agent steps may use without asking. */
+  allow: string[]
+  onFailure: 'parar' | 'seguir'
+  /** Body color of the robot. */
+  color: string
+  enabled: boolean
+  /** The file changed since the user approved it (or it was never approved). */
+  needsApproval: boolean
+  running: boolean
+  lastRun?: { ts: number; ok: boolean; ms: number }
+  nextRunAt?: number
+  /** Folder of its automation.md. */
+  dir: string
+}
+
+export interface AutomationStepResult {
+  name: string
+  kind: 'comando' | 'agente'
+  ok: boolean
+  /** Output (truncated). */
+  output: string
+  ms: number
+}
+
+export interface AutomationRun {
+  automationId: string
+  trigger: AutomationTrigger
+  /** e.g. agent id for an "agente" trigger, or changed file. */
+  detail?: string
+  startedAt: number
+  endedAt: number
+  ok: boolean
+  /** Why it did not run or stopped early (not approved, stopped…). */
+  note?: string
+  steps: AutomationStepResult[]
+}
+
 export interface BrainApi {
+  getAutomations(): Promise<AutomationInfo[]>
+  onAutomations(cb: (list: AutomationInfo[]) => void): () => void
+  /** Last runs of one automation, newest first. */
+  getAutomationRuns(id: string): Promise<AutomationRun[]>
+  onAutomationRun(cb: (run: AutomationRun) => void): () => void
+  /** Approves the automation as it is written now and switches it on. */
+  approveAutomation(id: string): Promise<void>
+  setAutomationEnabled(id: string, enabled: boolean): Promise<void>
+  runAutomation(id: string): Promise<void>
+  stopAutomation(id: string): Promise<void>
   getUsage(): Promise<UsageSnapshot>
   onUsage(cb: (usage: UsageSnapshot) => void): () => void
   getAgents(): Promise<AgentInfo[]>

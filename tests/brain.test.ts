@@ -69,6 +69,7 @@ describe('loadAgents', () => {
     const { agents, errors } = await loadAgents([builtin, examples], new Set(), { USER: 'Ana', AGENTS_DIR: '/a' })
     expect(errors).toEqual([])
     expect(agents.map((a) => a.info.id)).toEqual([
+      'automatizador',
       'configurador',
       ...COUNCIL,
       'documentos',
@@ -123,7 +124,7 @@ describe('loadAgents', () => {
     await write('nuevo', VALID)
 
     const { agents, errors } = await loadAgents([builtin, { dir: user, builtin: false }], new Set(['banco']))
-    expect(agents.map((a) => a.info.id)).toEqual(['configurador', ...COUNCIL, 'con-mcp', 'prueba'])
+    expect(agents.map((a) => a.info.id)).toEqual(['automatizador', 'configurador', ...COUNCIL, 'con-mcp', 'prueba'])
     expect(agents.find((a) => a.info.id === 'con-mcp')!.spec.mcp).toEqual(['banco'])
     expect(errors).toHaveLength(2)
     expect(errors.join('\n')).toMatch(/id duplicado "configurador"/)

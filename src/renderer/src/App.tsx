@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BRAIN_ID, PROVIDERS, SKINS, type AppStatus, type ProviderAuth, type ProviderId, type SkinId } from '@shared/types'
+import { AutomationsPanel } from './automations/AutomationsPanel'
 import { InputBar } from './chat/InputBar'
 import { OutputPanel } from './chat/OutputPanel'
 import { Office } from './office/Office'
@@ -345,6 +346,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [usageOpen, setUsageOpen] = useState(false)
   const [view, setView] = useState<View>('office')
+  const automationsOpen = useStore((s) => s.automationsOpen)
 
   useEffect(() => {
     const s = useStore.getState()
@@ -352,6 +354,7 @@ export function App() {
     void api.getAgents().then(s.setAgents)
     void api.getHistory().then(s.setMessages)
     void api.getUsage().then(s.setUsage)
+    void api.getAutomations().then(s.setAutomations)
     // The skin goes on <html> before the store update, so sprites repaint with its colors.
     const onStatus = (status: AppStatus): void => {
       applySkin(status.skin)
@@ -374,6 +377,7 @@ export function App() {
       api.onMessage(s.addMessage),
       api.onBusy(s.setBusy),
       api.onUsage(s.setUsage),
+      api.onAutomations(s.setAutomations),
       api.onPermission(s.pushPermission)
     ]
     return () => unsubscribe.forEach((off) => off())
@@ -392,6 +396,7 @@ export function App() {
       <PermissionModal />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {usageOpen && <UsagePanel onClose={() => setUsageOpen(false)} />}
+      {automationsOpen && <AutomationsPanel />}
     </div>
   )
 }
