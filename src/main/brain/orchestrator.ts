@@ -6,6 +6,7 @@ import {
   type AgentState,
   type ChatMessage,
   type ConversationState,
+  type PermissionRule,
   type ResumeMode,
   type ThoughtEvent,
   type UsageSnapshot
@@ -15,6 +16,7 @@ import type { McpCatalog } from '../mcp'
 import { brainReposText } from '../repos'
 import { fillPlaceholders, rosterText, type AgentRecord } from './registry'
 import { decide, type PermissionGate } from './permissions'
+import { matchRule, resolvePermission, suggestRule } from './rules'
 import type { BrainProvider, RunResult, RunSink } from './providers/types'
 import { chooseResumeMode, estimateTokens, summaryPreamble } from './resume'
 import type { ConversationStore } from './sessions'
@@ -43,6 +45,8 @@ export interface BrainConfig {
   usage: UsageStore
   /** Automations to run (and wait for) before an agent gets a job. */
   beforeDelegation?(agentId: string): Promise<void>
+  /** Saves a rule from "Permitir siempre" in config.json. */
+  addAllowRule?(rule: PermissionRule): Promise<void>
 }
 
 const IDLE_DELAY_MS = 3000
@@ -75,6 +79,8 @@ export class BrainOrchestrator {
   private jobs = new Map<string, string>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
   private active = new Set<string>()
+  /** "Permitir en esta conversación" rules, by conversation id. */
+  private sessionRules = new Map<string, PermissionRule[]>()
 
   constructor(
     private config: BrainConfig,
@@ -261,19 +267,50 @@ export class BrainOrchestrator {
           repos: this.config.getConfig().repos,
           allowedRepos: repoLimit ? new Set(repoLimit) : undefined
         })
-        if (decision === 'allow') return true
-        if (typeof decision === 'object') {
-          this.think(agentId, 'working', truncate(decision.deny))
-          return decision.deny
+        const workspaceDir = this.config.workspaceDir
+        const conversationId = this.sessions.id
+        const final = resolvePermission(decision, {
+          agentId,
+          tool,
+          input,
+          workspaceDir,
+          settings: this.config.getConfig().permissions,
+          session: this.sessionRules.get(conversationId)
+        })
+        if (final === 'allow') return true
+        if (typeof final === 'object') {
+          this.think(agentId, 'working', truncate(final.deny))
+          return final.deny
         }
         const custom = templateFor(this.agentOf(agentId)?.spec.permissions, tool)
         const summary = (custom && render(custom, input, '\n')) || permissionSummary(tool, input)
+        const suggestion = suggestRule(agentId, tool, input, workspaceDir)
         this.think(agentId, 'asking', truncate(`¿Puedo? ${summary}`))
-        const allowed = await this.gate.ask(agentId, tool, summary, signal)
-        this.think(agentId, 'working', allowed ? 'Gracias, sigo…' : 'Entendido, no lo hago')
-        return allowed
+        const answer = await this.gate.ask(agentId, tool, summary, signal, input, suggestion)
+        this.think(agentId, 'working', answer.allow ? 'Gracias, sigo…' : 'Entendido, no lo hago')
+        if (answer.allow && answer.remember) await this.remember(answer.remember, suggestion, conversationId)
+        return answer.allow
       }
     }
+  }
+
+  /** Keeps a "this conversation" or "always" answer and lets matching waiting prompts through. */
+  private async remember(
+    remember: 'conversation' | { rule: PermissionRule },
+    suggestion: PermissionRule,
+    conversationId: string
+  ): Promise<void> {
+    const rule = remember === 'conversation' ? suggestion : remember.rule
+    if (remember === 'conversation') {
+      this.sessionRules.set(conversationId, [...(this.sessionRules.get(conversationId) ?? []), rule])
+    } else {
+      try {
+        await this.config.addAllowRule?.(rule)
+      } catch (err) {
+        console.warn('[permisos]', err)
+      }
+    }
+    this.gate.allowWhere((p) => matchRule(rule, p.agentId, p.toolName, p.input, this.config.workspaceDir))
   }
 
   private agentOf(agentId: string): AgentRecord | undefined {

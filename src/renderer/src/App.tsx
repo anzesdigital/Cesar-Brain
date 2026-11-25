@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  BRAIN_ID,
   PROVIDERS,
   SKINS,
   type AppStatus,
@@ -14,50 +13,11 @@ import { AutomationsPanel } from './automations/AutomationsPanel'
 import { playSound, useTaskbarBadge } from './badge'
 import { InputBar } from './chat/InputBar'
 import { OutputPanel } from './chat/OutputPanel'
+import { PermissionModal, PermissionSettings } from './permissions/PermissionUI'
 import { Office } from './office/Office'
 import { applySkin } from './skin'
 import { useStore } from './store'
 import { UsagePanel } from './usage/UsagePanel'
-
-function PermissionModal() {
-  const request = useStore((s) => s.permissions[0])
-  const agents = useStore((s) => s.agents)
-  const shift = useStore((s) => s.shiftPermission)
-  const deny = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    deny.current?.focus()
-  }, [request?.id])
-
-  if (!request) return null
-  const who =
-    request.agentId === BRAIN_ID
-      ? 'El Cerebro'
-      : (agents.find((a) => a.id === request.agentId)?.name ?? 'Un agente')
-
-  const answer = (allow: boolean): void => {
-    void window.brain.respondPermission(request.id, allow)
-    shift()
-  }
-
-  return (
-    <div className="modal-backdrop">
-      <div className="modal" role="alertdialog" aria-labelledby="perm-title">
-        <h2 id="perm-title">{who} pide permiso</h2>
-        <p className="modal-summary">{request.summary}</p>
-        <p className="modal-note">Esto ocurre fuera de la carpeta de trabajo o ejecuta algo en tu equipo.</p>
-        <div className="modal-actions">
-          <button ref={deny} type="button" className="btn-ghost" onClick={() => answer(false)}>
-            No permitir
-          </button>
-          <button type="button" className="btn-primary" onClick={() => answer(true)}>
-            Permitir esta vez
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function cleanError(err: unknown): string {
   // Electron prefixes IPC errors; keep only the human part.
@@ -146,7 +106,7 @@ function ReposSettings() {
       <h3>Repositorios</h3>
       <p className="modal-note">
         Carpetas de código en las que pueden trabajar los agentes. En <strong>lectura</strong> solo leen; en{' '}
-        <strong>escritura</strong> también modifican archivos sin preguntar. Los comandos siempre piden permiso. Un agente
+        <strong>escritura</strong> también modifican archivos sin preguntar. Los comandos piden permiso según el modo de Permisos. Un agente
         puede limitarse a algunos con <code>repos: [nombre]</code> en su agent.md.
       </p>
       {status.repos.length > 0 ? (
@@ -366,6 +326,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <ProviderSettings />
         <SkinSettings />
         <NotificationSettings />
+        <PermissionSettings />
         {status?.provider === 'claude' && (
           <section className="settings-section">
             <label htmlFor="api-key">Clave de API de Anthropic</label>
@@ -469,7 +430,8 @@ export function App() {
       api.onUsage(s.setUsage),
       api.onAutomations(s.setAutomations),
       api.onPermission(s.pushPermission),
-      api.onNotifySound(playSound)
+      api.onNotifySound(playSound),
+      api.onPermissionResolved(s.dropPermission)
     ]
     return () => unsubscribe.forEach((off) => off())
   }, [])

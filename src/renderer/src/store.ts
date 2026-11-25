@@ -38,6 +38,8 @@ interface State {
   setBusy(busy: boolean): void
   pushPermission(request: PermissionRequest): void
   shiftPermission(): void
+  /** Removes a prompt the main process answered by itself. */
+  dropPermission(id: string): void
   select(agentId?: string): void
   setStatus(status: AppStatus): void
   clearConversation(): void
@@ -77,6 +79,7 @@ export const useStore = create<State>((set) => ({
   setBusy: (busy) => set((s) => ({ busy, permissions: busy ? s.permissions : [] })),
   pushPermission: (request) => set((s) => ({ permissions: [...s.permissions, request] })),
   shiftPermission: () => set((s) => ({ permissions: s.permissions.slice(1) })),
+  dropPermission: (id) => set((s) => ({ permissions: s.permissions.filter((p) => p.id !== id) })),
   select: (selectedAgent) => set({ selectedAgent }),
   setStatus: (status) => set({ status }),
   setUsage: (usage) => set({ usage }),

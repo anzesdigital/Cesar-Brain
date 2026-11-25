@@ -10,6 +10,10 @@ import {
   type ConversationState,
   type IncomingFile,
   type NotificationSettings,
+  PERMISSION_MODES,
+  type PermissionAnswer,
+  type PermissionMode,
+  type PermissionRule,
   type ProviderId,
   type RepoStatus,
   type ResumeMode,
@@ -24,7 +28,15 @@ import type { BrainProvider } from './brain/providers/types'
 import { CANONICAL_TOOLS, loadAgents, type AgentRecord } from './brain/registry'
 import { ConversationStore } from './brain/sessions'
 import { UsageStore } from './brain/usage'
-import { defaultConfig, loadConfig, readRawConfig, updateConfigFile, updateReposInFile, type AppConfig } from './config'
+import {
+  cleanRule,
+  defaultConfig,
+  loadConfig,
+  readRawConfig,
+  updateConfigFile,
+  updateReposInFile,
+  type AppConfig
+} from './config'
 import { defaultHomeDir, ensureHome, homePaths } from './home'
 import { emptyCatalog, loadMcp, type McpCatalog } from './mcp'
 import { agentReposText, REPO_NAME_RE, reposFor, usesFiles } from './repos'
@@ -160,6 +172,7 @@ function status(): AppStatus {
     provider: config.provider,
     skin: config.skin,
     notifications: config.notifications,
+    permissions: config.permissions,
     ...(customSound ? { customSound } : {}),
     homeDir: home.root,
     workspaceDir: home.workspaceDir,
@@ -255,10 +268,24 @@ async function main(): Promise<void> {
     send
   })
   const agentName = (id: string): string => agents.find((a) => a.info.id === id)?.info.name ?? id
-  const gate = new PermissionGate((request) => {
-    send('permission', request)
-    notifier.permission(request, agentName(request.agentId))
-  })
+  const gate = new PermissionGate(
+    (request) => {
+      send('permission', request)
+      notifier.permission(request, agentName(request.agentId))
+    },
+    (id) => send('permission-resolved', id)
+  )
+  /** Adds one rule to config.json `permissions` (skipping exact duplicates) and reloads. */
+  const addPermissionRule = async (kind: 'allow' | 'deny', rule: PermissionRule): Promise<void> => {
+    const clean = cleanRule(rule)
+    if (!clean) throw new Error('La regla necesita una herramienta.')
+    const current = config.permissions
+    const same = (r: PermissionRule): boolean =>
+      r.tool === clean.tool && r.pattern === clean.pattern && r.agent === clean.agent
+    if (current[kind].some(same)) return
+    await updateConfigFile(home.configFile, { permissions: { ...current, [kind]: [...current[kind], clean] } })
+    await reload()
+  }
 
   // Bubbles of robots and of agents working for an automation; they go idle by themselves.
   const idleTimers = new Map<string, NodeJS.Timeout>()
@@ -333,7 +360,8 @@ async function main(): Promise<void> {
       getConfig: () => config,
       getProvider: () => providers[config.provider],
       usage,
-      beforeDelegation: (agentId) => manager.beforeDelegation(agentId)
+      beforeDelegation: (agentId) => manager.beforeDelegation(agentId),
+      addAllowRule: (rule) => addPermissionRule('allow', rule)
     },
     sessions,
     gate,
@@ -515,7 +543,31 @@ async function main(): Promise<void> {
     send('status', status())
   })
   ipcMain.handle('apikey:set', (_e, key: string) => saveApiKey(String(key ?? '')))
-  ipcMain.handle('permission:respond', (_e, id: string, allow: boolean) => gate.respond(id, allow === true))
+  ipcMain.handle('permission:respond', (_e, id: string, answer: PermissionAnswer) => {
+    if (answer?.allow !== true) return gate.respond(String(id), { allow: false })
+    const remember = answer.remember
+    if (remember === 'conversation') return gate.respond(String(id), { allow: true, remember })
+    const rule = remember && typeof remember === 'object' ? cleanRule(remember.rule) : undefined
+    gate.respond(String(id), rule ? { allow: true, remember: { rule } } : { allow: true })
+  })
+  ipcMain.handle('permissions:set-mode', async (_e, mode: PermissionMode) => {
+    if (!Object.hasOwn(PERMISSION_MODES, mode)) throw new Error(`Modo de permisos desconocido: ${String(mode)}`)
+    if (mode === config.permissions.mode) return
+    await updateConfigFile(home.configFile, { permissions: { ...config.permissions, mode } })
+    await reload()
+  })
+  ipcMain.handle('permissions:add-rule', (_e, kind: string, rule: PermissionRule) => {
+    if (kind !== 'allow' && kind !== 'deny') throw new Error(`Tipo de regla desconocido: ${String(kind)}`)
+    return addPermissionRule(kind, rule)
+  })
+  ipcMain.handle('permissions:remove-rule', async (_e, kind: string, index: number) => {
+    if (kind !== 'allow' && kind !== 'deny') throw new Error(`Tipo de regla desconocido: ${String(kind)}`)
+    const list = config.permissions[kind]
+    if (!Number.isInteger(index) || index < 0 || index >= list.length) return
+    const next = list.filter((_r, i) => i !== index)
+    await updateConfigFile(home.configFile, { permissions: { ...config.permissions, [kind]: next } })
+    await reload()
+  })
   ipcMain.handle('path:open', async (_e, target: string) => {
     // Only folders the app owns can be opened from the UI.
     if (isInside(target, home.root)) await shell.openPath(target)

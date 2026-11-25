@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { resolve, sep } from 'node:path'
-import type { PermissionRequest } from '@shared/types'
+import type { PermissionAnswer, PermissionRequest, PermissionRule } from '@shared/types'
 import { mcpServerOf } from '../mcp'
 import type { Repo } from '../repos'
 
@@ -77,29 +77,62 @@ export function decide(toolName: string, input: Record<string, unknown>, ctx: Po
   return 'ask'
 }
 
+/** A prompt waiting for the user, with what it was about. */
+export interface PendingPermission {
+  agentId: string
+  toolName: string
+  input: Record<string, unknown>
+}
+
 /** Holds permission prompts open until the user answers in the UI. */
 export class PermissionGate {
-  private pending = new Map<string, (allow: boolean) => void>()
+  private pending = new Map<string, PendingPermission & { done: (answer: PermissionAnswer) => void }>()
 
-  constructor(private notify: (req: PermissionRequest) => void) {}
+  /**
+   * `notify` shows a prompt; `resolved` tells the UI a prompt was answered
+   * without it (a new rule covered it, or the run stopped).
+   */
+  constructor(
+    private notify: (req: PermissionRequest) => void,
+    private resolved: (id: string) => void = () => undefined
+  ) {}
 
-  ask(agentId: string, toolName: string, summary: string, signal?: AbortSignal): Promise<boolean> {
+  ask(
+    agentId: string,
+    toolName: string,
+    summary: string,
+    signal?: AbortSignal,
+    input: Record<string, unknown> = {},
+    suggestion?: PermissionRule
+  ): Promise<PermissionAnswer> {
     const id = randomUUID()
-    return new Promise<boolean>((resolvePromise) => {
-      this.pending.set(id, resolvePromise)
-      signal?.addEventListener('abort', () => this.respond(id, false), { once: true })
-      this.notify({ id, agentId, toolName, summary })
+    return new Promise<PermissionAnswer>((resolvePromise) => {
+      this.pending.set(id, { agentId, toolName, input, done: resolvePromise })
+      signal?.addEventListener('abort', () => this.respond(id, { allow: false }), { once: true })
+      this.notify({ id, agentId, toolName, summary, ...(suggestion ? { suggestion } : {}) })
     })
   }
 
-  respond(id: string, allow: boolean): void {
-    const done = this.pending.get(id)
-    if (!done) return
+  respond(id: string, answer: PermissionAnswer): void {
+    const entry = this.pending.get(id)
+    if (!entry) return
     this.pending.delete(id)
-    done(allow)
+    entry.done(answer)
+  }
+
+  /** Allows, once, every waiting prompt `covered` says yes to; returns how many. */
+  allowWhere(covered: (p: PendingPermission) => boolean): number {
+    let count = 0
+    for (const [id, entry] of [...this.pending]) {
+      if (!covered(entry)) continue
+      this.respond(id, { allow: true })
+      this.resolved(id)
+      count++
+    }
+    return count
   }
 
   denyAll(): void {
-    for (const id of [...this.pending.keys()]) this.respond(id, false)
+    for (const id of [...this.pending.keys()]) this.respond(id, { allow: false })
   }
 }

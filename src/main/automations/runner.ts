@@ -5,6 +5,7 @@ import type { AppConfig } from '../config'
 import type { McpCatalog } from '../mcp'
 import { decide, isInside } from '../brain/permissions'
 import type { BrainProvider, RunResult, RunSink } from '../brain/providers/types'
+import { DENIED_BY_RULE, matchRule } from '../brain/rules'
 import type { AgentRecord } from '../brain/registry'
 import { firstSentence, thoughtForTool, truncate } from '../brain/thoughts'
 import { mcpServerOf } from '../mcp'
@@ -141,6 +142,10 @@ export function unattendedSink(spec: AutomationSpec, agent: AgentRecord, deps: R
         repos: config.repos,
         allowedRepos: repos ? new Set(repos) : undefined
       })
+      // The user's deny rules apply here too; the mode and allow rules do not (nobody is watching).
+      if (config.permissions.deny.some((rule) => matchRule(rule, agentId, tool, input, deps.workspaceDir))) {
+        return DENIED_BY_RULE
+      }
       if (decision === 'allow') return true
       if (typeof decision === 'object') return decision.deny
       if (allowedByAutomation(tool, spec.allow)) {

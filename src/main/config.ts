@@ -1,6 +1,16 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
-import { SKINS, type NotificationSettings, type NotificationSound, type ProviderId, type SkinId } from '@shared/types'
+import {
+  PERMISSION_MODES,
+  SKINS,
+  type NotificationSettings,
+  type NotificationSound,
+  type PermissionMode,
+  type PermissionRule,
+  type PermissionSettings,
+  type ProviderId,
+  type SkinId
+} from '@shared/types'
 import { DEFAULT_RESUME_MAX_TOKENS } from './brain/resume'
 import { parseRepos, type Repo } from './repos'
 
@@ -27,6 +37,8 @@ export interface AppConfig {
   resumeMaxTokens: number
   /** Windows notifications when the brain waits for the user or finishes. */
   notifications: NotificationSettings
+  /** Mode and remembered rules for permission prompts. */
+  permissions: PermissionSettings
 }
 
 const modelsSchema = z
@@ -53,7 +65,9 @@ const configSchema = z.object({
   disabledAgents: z.unknown().optional(),
   resumeMaxTokens: z.number().int().min(0).optional(),
   // Bad values fall back to the defaults, see notificationsOf.
-  notifications: z.unknown().optional()
+  notifications: z.unknown().optional(),
+  // Checked rule by rule in parsePermissions, so one bad rule does not break the file.
+  permissions: z.unknown().optional()
 })
 
 const SOUNDS: NotificationSound[] = ['sistema', 'ninguno', 'personalizado']
@@ -66,6 +80,48 @@ function notificationsOf(raw: unknown): NotificationSettings {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : base.enabled,
     sound: SOUNDS.includes(value.sound as NotificationSound) ? (value.sound as NotificationSound) : base.sound
   }
+}
+
+/** A rule with trimmed text, or undefined without a tool. */
+export function cleanRule(raw: unknown): PermissionRule | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+  const tool = text(value.tool)
+  if (!tool) return undefined
+  const pattern = text(value.pattern)
+  const agent = text(value.agent)
+  return { tool, ...(pattern ? { pattern } : {}), ...(agent ? { agent } : {}) }
+}
+
+/** config.json `permissions`; bad rules are skipped and reported. */
+export function parsePermissions(raw: unknown): { permissions: PermissionSettings; errors: string[] } {
+  const permissions: PermissionSettings = { mode: 'preguntar', allow: [], deny: [] }
+  const errors: string[] = []
+  if (raw === undefined) return { permissions, errors }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { permissions, errors: ['config.json: permissions debe ser un objeto; se ignora.'] }
+  }
+  const value = raw as Record<string, unknown>
+  if (typeof value.mode === 'string' && Object.hasOwn(PERMISSION_MODES, value.mode)) {
+    permissions.mode = value.mode as PermissionMode
+  } else if (value.mode !== undefined) {
+    errors.push(`config.json: permissions.mode "${String(value.mode)}" no existe (usa ${Object.keys(PERMISSION_MODES).join(', ')}); se usa preguntar.`)
+  }
+  for (const kind of ['allow', 'deny'] as const) {
+    const list = value[kind]
+    if (list === undefined) continue
+    if (!Array.isArray(list)) {
+      errors.push(`config.json: permissions.${kind} debe ser una lista; se ignora.`)
+      continue
+    }
+    list.forEach((entry, i) => {
+      const rule = cleanRule(entry)
+      if (rule) permissions[kind].push(rule)
+      else errors.push(`config.json: permissions.${kind}[${i}] necesita "tool"; se ignora.`)
+    })
+  }
+  return { permissions, errors }
 }
 
 function disabledOf(raw: unknown): string[] {
@@ -96,7 +152,8 @@ export function defaultConfig(): AppConfig {
     skin: 'clasica',
     disabledAgents: [],
     resumeMaxTokens: DEFAULT_RESUME_MAX_TOKENS,
-    notifications: { enabled: true, sound: 'sistema' }
+    notifications: { enabled: true, sound: 'sistema' },
+    permissions: { mode: 'preguntar', allow: [], deny: [] }
   }
 }
 
@@ -121,7 +178,8 @@ export function parseConfig(raw: unknown): AppConfig {
     skin: isSkin(data.skin) ? data.skin : base.skin,
     disabledAgents: disabledOf(data.disabledAgents),
     resumeMaxTokens: data.resumeMaxTokens ?? base.resumeMaxTokens,
-    notifications: notificationsOf(data.notifications)
+    notifications: notificationsOf(data.notifications),
+    permissions: parsePermissions(data.permissions).permissions
   }
 }
 
@@ -143,7 +201,7 @@ export async function loadConfig(file: string): Promise<ConfigLoad> {
   try {
     const raw = JSON.parse(text) as Record<string, unknown> | null
     const skin = skinWarning(raw?.skin)
-    const warnings = [...parseRepos(raw?.repos).errors, ...(skin ? [skin] : [])]
+    const warnings = [...parseRepos(raw?.repos).errors, ...(skin ? [skin] : []), ...parsePermissions(raw?.permissions).errors]
     return { config: parseConfig(raw), ...(warnings.length ? { warnings } : {}) }
   } catch (err) {
     const reason = err instanceof SyntaxError ? `config.json no es JSON válido (${err.message})` : (err as Error).message

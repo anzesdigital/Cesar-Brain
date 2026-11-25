@@ -34,7 +34,45 @@ export interface PermissionRequest {
   agentId: string
   toolName: string
   summary: string
+  /** Rule that "Permitir siempre" would save, ready to edit. */
+  suggestion?: PermissionRule
 }
+
+/**
+ * How much runs without asking: `preguntar` (only what is free already),
+ * `ediciones` (file tools anywhere), `automatico` (safe commands and writes in
+ * the agent's repos), `todo` (everything). Denials always win.
+ */
+export type PermissionMode = 'preguntar' | 'ediciones' | 'automatico' | 'todo'
+
+export const PERMISSION_MODES: Record<PermissionMode, string> = {
+  preguntar: 'Preguntar',
+  ediciones: 'Aceptar ediciones',
+  automatico: 'Automático',
+  todo: 'Permitir todo'
+}
+
+/** A remembered answer to a permission prompt. */
+export interface PermissionRule {
+  /** Tool name (`Bash`, `Write`, `mcp__srv__tool`) or a whole MCP server (`mcp__srv`). */
+  tool: string
+  /** Commands: prefix (`npm test`). File tools: a folder. Missing: the whole tool. */
+  pattern?: string
+  /** Agent id; missing: every agent and the brain. */
+  agent?: string
+}
+
+/** config.json `permissions`. */
+export interface PermissionSettings {
+  mode: PermissionMode
+  allow: PermissionRule[]
+  deny: PermissionRule[]
+}
+
+/** The user's answer in the permission modal. */
+export type PermissionAnswer =
+  | { allow: false }
+  | { allow: true; remember?: 'conversation' | { rule: PermissionRule } }
 
 export interface ChatMessage {
   role: 'user' | 'brain'
@@ -135,6 +173,7 @@ export interface AppStatus {
   provider: ProviderId
   skin: SkinId
   notifications: NotificationSettings
+  permissions: PermissionSettings
   /** File name of the custom notification sound, if one was chosen. */
   customSound?: string
   homeDir: string
@@ -291,7 +330,13 @@ export interface BrainApi {
   setResumeMode(mode: ResumeMode | undefined): Promise<void>
   /** Switches an agent on or off (saved in config.json `disabledAgents`). */
   setAgentEnabled(id: string, enabled: boolean): Promise<void>
-  respondPermission(id: string, allow: boolean): Promise<void>
+  respondPermission(id: string, answer: PermissionAnswer): Promise<void>
+  /** Saves config.json `permissions.mode`. */
+  setPermissionMode(mode: PermissionMode): Promise<void>
+  addPermissionRule(kind: 'allow' | 'deny', rule: PermissionRule): Promise<void>
+  removePermissionRule(kind: 'allow' | 'deny', index: number): Promise<void>
+  /** A prompt was answered without the modal (e.g. a new rule covers it). */
+  onPermissionResolved(cb: (id: string) => void): () => void
   openPath(path: string): Promise<void>
   pathForFile(file: File): string
   onAgents(cb: (agents: AgentInfo[]) => void): () => void
