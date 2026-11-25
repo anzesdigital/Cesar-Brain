@@ -52,6 +52,7 @@ Una de estas:
 - Decisiones difíciles: di «consejo: …» (o «debate esto», «pon a prueba esto») y cinco asesores con miradas opuestas opinan, se revisan entre ellos a ciegas y un presidente da el veredicto. Si el Cerebro ve una decisión con mucho en juego, te ofrece el consejo con un botón. Método [LLM Council](https://github.com/karpathy/llm-council) de Andrej Karpathy, adaptado del skill de [Ole Lehmann](https://github.com/aiwithremy/claude-skills-llm-council).
 - Oficina: cada agente se sienta en la sala de su `zona`. Zoom con los botones o Ctrl + rueda (pellizco en táctil), arrastra el suelo para moverte, doble clic para ver todo. En ventanas estrechas, pestañas Oficina / Chat.
 - Ajustes muestra el proveedor, la sesión, las carpetas y cualquier `agent.md` o `mcp.json` con errores.
+- Avisos: con la ventana en segundo plano, Windows avisa cuando un agente pide permiso, cuando el Cerebro te pregunta algo (bloque de opciones) y cuando termina de responder. La barra de tareas parpadea y el icono muestra cuántas cosas esperan. En **Ajustes → Avisos** se activan o desactivan y se elige el sonido: el del sistema, ninguno o uno propio (wav, mp3 u ogg, se copia a `sonidos/aviso.<ext>` en tu carpeta). Se guarda en `config.json` → `notifications`.
 
 ## Desarrollo
 

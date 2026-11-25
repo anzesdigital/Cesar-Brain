@@ -102,6 +102,15 @@ export const SKINS: Record<SkinId, string> = {
   ing: 'ING'
 }
 
+/** Sound of the Windows notifications: the system one, none, or the user's own file. */
+export type NotificationSound = 'sistema' | 'ninguno' | 'personalizado'
+
+/** config.json `notifications`: warn when the brain waits for the user or finishes. */
+export interface NotificationSettings {
+  enabled: boolean
+  sound: NotificationSound
+}
+
 /** Whether the chosen provider can run, and what to do if not. */
 export interface ProviderAuth {
   provider: ProviderId
@@ -125,6 +134,9 @@ export interface AppStatus {
   busy: boolean
   provider: ProviderId
   skin: SkinId
+  notifications: NotificationSettings
+  /** File name of the custom notification sound, if one was chosen. */
+  customSound?: string
   homeDir: string
   workspaceDir: string
   agentsDir: string
@@ -291,4 +303,14 @@ export interface BrainApi {
   onMessage(cb: (m: ChatMessage) => void): () => void
   onBusy(cb: (busy: boolean) => void): () => void
   onPermission(cb: (p: PermissionRequest) => void): () => void
+  /** Saves config.json `notifications`. */
+  setNotifications(settings: NotificationSettings): Promise<void>
+  /** Asks for a sound file and makes it the notification sound; resolves with its name, or undefined if cancelled. */
+  pickNotificationSound(): Promise<string | undefined>
+  /** Shows a sample notification, even with the window in front. */
+  testNotification(): Promise<void>
+  /** Number on the taskbar icon (PNG data URL), or null to remove it. */
+  setBadge(dataUrl: string | null, count: number): Promise<void>
+  /** Bytes of the custom sound to play with a notification. */
+  onNotifySound(cb: (bytes: Uint8Array) => void): () => void
 }

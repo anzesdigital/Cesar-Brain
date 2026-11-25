@@ -49,7 +49,12 @@ const api: BrainApi = {
   onDelta: on('delta'),
   onMessage: on('message'),
   onBusy: on('busy'),
-  onPermission: on('permission')
+  onPermission: on('permission'),
+  setNotifications: (settings) => ipcRenderer.invoke('notifications:set', settings),
+  pickNotificationSound: () => ipcRenderer.invoke('notifications:pick-sound'),
+  testNotification: () => ipcRenderer.invoke('notifications:test'),
+  setBadge: (dataUrl, count) => ipcRenderer.invoke('badge:set', dataUrl, count),
+  onNotifySound: on('notify-sound')
 }
 
 contextBridge.exposeInMainWorld('brain', api)

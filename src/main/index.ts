@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage, shell } from 'electron'
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import chokidar from 'chokidar'
 import {
@@ -9,6 +9,7 @@ import {
   type AppStatus,
   type ConversationState,
   type IncomingFile,
+  type NotificationSettings,
   type ProviderId,
   type RepoStatus,
   type ResumeMode,
@@ -30,6 +31,8 @@ import { agentReposText, REPO_NAME_RE, reposFor, usesFiles } from './repos'
 import { runAutomation } from './automations/runner'
 import { AutomationManager, type Watcher } from './automations/scheduler'
 import { loadAutomations } from './automations/spec'
+import { findCustomSound, SOUND_BASENAME, SOUND_EXTENSIONS } from './alerts'
+import { Notifier } from './notifier'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -42,6 +45,9 @@ const examplesAgentsDir = join(appRoot, 'examples', 'agents')
 // The user's own folder: agents, config, MCP servers, memory, workspace.
 const home = homePaths(defaultHomeDir())
 
+// Custom notification sound (sonidos/aviso.mp3…).
+const soundsDir = join(home.root, 'sonidos')
+
 // Private app state.
 const keyFile = join(app.getPath('userData'), 'api-key.bin')
 
@@ -53,6 +59,7 @@ let problems: string[] = []
 let repoStatus: RepoStatus[] = []
 let apiKey: string | undefined
 let automations: AutomationManager | undefined
+let customSound: string | undefined
 
 const providers: Record<ProviderId, BrainProvider> = {
   claude: new ClaudeProvider(() => apiKey),
@@ -126,6 +133,7 @@ async function reload(): Promise<void> {
     vars: { USER: config.userName || 'el usuario' }
   })
   automations?.setSpecs(autoLoad.automations)
+  customSound = await findCustomSound(soundsDir)
 
   problems = [
     ...(loaded.error ? [loaded.error] : []),
@@ -151,6 +159,8 @@ function status(): AppStatus {
     conversation: conversation(),
     provider: config.provider,
     skin: config.skin,
+    notifications: config.notifications,
+    ...(customSound ? { customSound } : {}),
     homeDir: home.root,
     workspaceDir: home.workspaceDir,
     agentsDir: home.agentsDir,
@@ -225,6 +235,8 @@ function createWindow(): void {
 }
 
 async function main(): Promise<void> {
+  // Windows shows toasts only for an app with an id.
+  if (process.platform === 'win32') app.setAppUserModelId('com.cesar.brain')
   await app.whenReady()
   await ensureHome(home, examplesAgentsDir)
   await loadApiKey()
@@ -236,7 +248,17 @@ async function main(): Promise<void> {
   await sessions.load()
   const usage = new UsageStore(join(app.getPath('userData'), 'usage.json'))
   await usage.load()
-  const gate = new PermissionGate((request) => send('permission', request))
+  const notifier = new Notifier({
+    getWindow: () => win,
+    getSettings: () => config.notifications,
+    soundsDir,
+    send
+  })
+  const agentName = (id: string): string => agents.find((a) => a.info.id === id)?.info.name ?? id
+  const gate = new PermissionGate((request) => {
+    send('permission', request)
+    notifier.permission(request, agentName(request.agentId))
+  })
 
   // Bubbles of robots and of agents working for an automation; they go idle by themselves.
   const idleTimers = new Map<string, NodeJS.Timeout>()
@@ -318,7 +340,10 @@ async function main(): Promise<void> {
     {
       thought: (event) => send('thought', event),
       delta: (text) => send('delta', text),
-      message: (message) => send('message', message),
+      message: (message) => {
+        send('message', message)
+        notifier.message(message)
+      },
       busy: (isBusy) => {
         send('busy', isBusy)
         if (!isBusy) send('status', status())
@@ -405,6 +430,37 @@ async function main(): Promise<void> {
     if (skin === config.skin) return
     await updateConfigFile(home.configFile, { skin })
     await reload()
+  })
+  ipcMain.handle('notifications:set', async (_e, settings: NotificationSettings) => {
+    const enabled = settings?.enabled !== false
+    const sound = ['sistema', 'ninguno', 'personalizado'].includes(settings?.sound) ? settings.sound : 'sistema'
+    await updateConfigFile(home.configFile, { notifications: { enabled, sound } })
+    await reload()
+  })
+  ipcMain.handle('notifications:pick-sound', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Elige el sonido de los avisos',
+      properties: ['openFile'],
+      filters: [{ name: 'Sonido', extensions: SOUND_EXTENSIONS }]
+    }
+    const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    const source = picked.filePaths[0]
+    if (picked.canceled || !source) return undefined
+    const ext = extname(source).slice(1).toLowerCase()
+    if (!SOUND_EXTENSIONS.includes(ext)) throw new Error(`Formato no admitido: usa ${SOUND_EXTENSIONS.join(', ')}.`)
+    await mkdir(soundsDir, { recursive: true })
+    for (const old of SOUND_EXTENSIONS) await rm(join(soundsDir, `${SOUND_BASENAME}.${old}`), { force: true })
+    const name = `${SOUND_BASENAME}.${ext}`
+    await copyFile(source, join(soundsDir, name))
+    await updateConfigFile(home.configFile, { notifications: { ...config.notifications, sound: 'personalizado' } })
+    await reload()
+    return name
+  })
+  ipcMain.handle('notifications:test', () => notifier.test())
+  ipcMain.handle('badge:set', (_e, dataUrl: string | null, count: number) => {
+    if (!win || win.isDestroyed() || process.platform !== 'win32') return
+    const image = typeof dataUrl === 'string' && dataUrl.startsWith('data:image/png') ? nativeImage.createFromDataURL(dataUrl) : null
+    win.setOverlayIcon(image, image ? `${Number(count) || 0} pendientes` : '')
   })
   ipcMain.handle('provider:set', async (_e, provider: ProviderId) => {
     if (provider !== 'claude' && provider !== 'copilot') throw new Error(`Proveedor desconocido: ${String(provider)}`)

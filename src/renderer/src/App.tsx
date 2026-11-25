@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { BRAIN_ID, PROVIDERS, SKINS, type AppStatus, type ProviderAuth, type ProviderId, type SkinId } from '@shared/types'
+import {
+  BRAIN_ID,
+  PROVIDERS,
+  SKINS,
+  type AppStatus,
+  type NotificationSettings as NotifySettings,
+  type NotificationSound,
+  type ProviderAuth,
+  type ProviderId,
+  type SkinId
+} from '@shared/types'
 import { AutomationsPanel } from './automations/AutomationsPanel'
+import { playSound, useTaskbarBadge } from './badge'
 import { InputBar } from './chat/InputBar'
 import { OutputPanel } from './chat/OutputPanel'
 import { Office } from './office/Office'
@@ -255,6 +266,83 @@ function SkinSettings() {
   )
 }
 
+const SOUNDS: Record<NotificationSound, string> = {
+  sistema: 'Del sistema',
+  ninguno: 'Sin sonido',
+  personalizado: 'Personalizado'
+}
+
+function NotificationSettings() {
+  const settings = useStore((s) => s.status?.notifications)
+  const customSound = useStore((s) => s.status?.customSound)
+  const [error, setError] = useState('')
+
+  const run = async (action: () => Promise<unknown>): Promise<void> => {
+    setError('')
+    try {
+      await action()
+    } catch (err) {
+      setError(cleanError(err))
+    }
+  }
+  const save = (patch: Partial<NotifySettings>): Promise<void> =>
+    run(() => window.brain.setNotifications({ enabled: true, sound: 'sistema', ...settings, ...patch }))
+
+  if (!settings) return null
+  return (
+    <section className="settings-block">
+      <h3>Avisos</h3>
+      <div className="usage-ranges" role="group" aria-label="Avisos">
+        {[true, false].map((on) => (
+          <button
+            type="button"
+            key={String(on)}
+            className={`btn-ghost${settings.enabled === on ? ' usage-range-on' : ''}`}
+            aria-pressed={settings.enabled === on}
+            onClick={() => void save({ enabled: on })}
+          >
+            {on ? 'Activados' : 'Desactivados'}
+          </button>
+        ))}
+      </div>
+      {settings.enabled && (
+        <>
+          <div className="usage-ranges" role="group" aria-label="Sonido de los avisos">
+            {(Object.keys(SOUNDS) as NotificationSound[]).map((id) => (
+              <button
+                type="button"
+                key={id}
+                className={`btn-ghost${settings.sound === id ? ' usage-range-on' : ''}`}
+                aria-pressed={settings.sound === id}
+                onClick={() =>
+                  void (id === 'personalizado' && !customSound
+                    ? run(() => window.brain.pickNotificationSound())
+                    : save({ sound: id }))
+                }
+              >
+                {SOUNDS[id]}
+              </button>
+            ))}
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn-ghost" onClick={() => void run(() => window.brain.pickNotificationSound())}>
+              {customSound ? `Cambiar sonido (${customSound})` : 'Elegir sonido…'}
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => void run(() => window.brain.testNotification())}>
+              Probar
+            </button>
+          </div>
+        </>
+      )}
+      <p className="modal-note">
+        Avisa cuando un agente pide permiso, cuando el Cerebro te pregunta algo y cuando termina de responder. Solo si
+        la ventana no está delante. Se guarda en config.json.
+      </p>
+      {error && <p className="inputbar-error">{error}</p>}
+    </section>
+  )
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const status = useStore((s) => s.status)
   const setStatus = useStore((s) => s.setStatus)
@@ -277,6 +365,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <h2 id="settings-title">Ajustes</h2>
         <ProviderSettings />
         <SkinSettings />
+        <NotificationSettings />
         {status?.provider === 'claude' && (
           <section className="settings-section">
             <label htmlFor="api-key">Clave de API de Anthropic</label>
@@ -347,6 +436,7 @@ export function App() {
   const [usageOpen, setUsageOpen] = useState(false)
   const [view, setView] = useState<View>('office')
   const automationsOpen = useStore((s) => s.automationsOpen)
+  useTaskbarBadge()
 
   useEffect(() => {
     const s = useStore.getState()
@@ -378,7 +468,8 @@ export function App() {
       api.onBusy(s.setBusy),
       api.onUsage(s.setUsage),
       api.onAutomations(s.setAutomations),
-      api.onPermission(s.pushPermission)
+      api.onPermission(s.pushPermission),
+      api.onNotifySound(playSound)
     ]
     return () => unsubscribe.forEach((off) => off())
   }, [])

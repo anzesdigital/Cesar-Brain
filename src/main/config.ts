@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { z } from 'zod'
-import { SKINS, type ProviderId, type SkinId } from '@shared/types'
+import { SKINS, type NotificationSettings, type NotificationSound, type ProviderId, type SkinId } from '@shared/types'
 import { DEFAULT_RESUME_MAX_TOKENS } from './brain/resume'
 import { parseRepos, type Repo } from './repos'
 
@@ -25,6 +25,8 @@ export interface AppConfig {
   disabledAgents: string[]
   /** Above this estimated size, an old conversation resumes from a summary. */
   resumeMaxTokens: number
+  /** Windows notifications when the brain waits for the user or finishes. */
+  notifications: NotificationSettings
 }
 
 const modelsSchema = z
@@ -49,8 +51,22 @@ const configSchema = z.object({
   skin: z.unknown().optional(),
   // Anything that is not a list of ids is ignored, see disabledOf.
   disabledAgents: z.unknown().optional(),
-  resumeMaxTokens: z.number().int().min(0).optional()
+  resumeMaxTokens: z.number().int().min(0).optional(),
+  // Bad values fall back to the defaults, see notificationsOf.
+  notifications: z.unknown().optional()
 })
+
+const SOUNDS: NotificationSound[] = ['sistema', 'ninguno', 'personalizado']
+
+function notificationsOf(raw: unknown): NotificationSettings {
+  const base: NotificationSettings = { enabled: true, sound: 'sistema' }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return base
+  const value = raw as Record<string, unknown>
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : base.enabled,
+    sound: SOUNDS.includes(value.sound as NotificationSound) ? (value.sound as NotificationSound) : base.sound
+  }
+}
 
 function disabledOf(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
@@ -79,7 +95,8 @@ export function defaultConfig(): AppConfig {
     repos: [],
     skin: 'clasica',
     disabledAgents: [],
-    resumeMaxTokens: DEFAULT_RESUME_MAX_TOKENS
+    resumeMaxTokens: DEFAULT_RESUME_MAX_TOKENS,
+    notifications: { enabled: true, sound: 'sistema' }
   }
 }
 
@@ -103,7 +120,8 @@ export function parseConfig(raw: unknown): AppConfig {
     repos: parseRepos(data.repos).repos,
     skin: isSkin(data.skin) ? data.skin : base.skin,
     disabledAgents: disabledOf(data.disabledAgents),
-    resumeMaxTokens: data.resumeMaxTokens ?? base.resumeMaxTokens
+    resumeMaxTokens: data.resumeMaxTokens ?? base.resumeMaxTokens,
+    notifications: notificationsOf(data.notifications)
   }
 }
 
