@@ -808,9 +808,10 @@ button:disabled {
 
 .output-header div {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
 }
 
 .output-header .btn-ghost {
@@ -1259,6 +1260,10 @@ button:disabled {
   overflow-y: auto;
 }
 
+.settings-block {
+  margin-top: 14px;
+}
+
 .settings-section {
   margin-top: 18px;
   padding-top: 14px;
@@ -1437,6 +1442,7 @@ button:disabled {
 
 .usage-ranges {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

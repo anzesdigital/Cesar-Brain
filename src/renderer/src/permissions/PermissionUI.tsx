@@ -260,8 +260,8 @@ export function PermissionSettings() {
         <h4>Añadir regla</h4>
         <div className="perm-add-row">
           <select value={kind} onChange={(e) => setKind(e.target.value as 'allow' | 'deny')} aria-label="Permitir o denegar">
-            <option value="allow">Permitir siempre</option>
-            <option value="deny">No permitir nunca</option>
+            <option value="allow">Permitir</option>
+            <option value="deny">Denegar</option>
           </select>
           <select value={tool} onChange={(e) => setTool(e.target.value)} aria-label="Herramienta">
             {TOOL_CHOICES.map((c) => (
